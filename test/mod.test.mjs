@@ -160,7 +160,7 @@ function fakeHost({ context = 'main' } = {}) {
   const registered = {}, logs = [], toasts = [], listeners = new Set();
   let values = {};
   const registry = name => ({ register: entry => { (registered[name] ||= []).push(entry); return name === 'settingsSections' ? { params } : () => {}; } });
-  const params = { get: () => ({ translationFirst: false, bilingual: true, ruby: true, caption: false, captionTop: false, poster: false, ...values }), set: next => { values = { ...values, ...next }; listeners.forEach(fn => fn()); }, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
+  const params = { get: () => ({ primary: 'original', bilingual: true, ruby: true, strip: 'off', poster: false, ...values }), set: next => { values = { ...values, ...next }; listeners.forEach(fn => fn()); }, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
   const storeListeners = new Set();
   let state = { currentSong: null, lyrics: null, transitionDisplay: false, setLyricsState() {}, setCurrentLineIndex() {} };
   const playback = { getState: () => state, subscribe: fn => { storeListeners.add(fn); return () => storeListeners.delete(fn); }, change(next) { const previous = state; state = { ...state, ...next }; storeListeners.forEach(fn => fn(state, previous)); } };
@@ -180,10 +180,8 @@ test('the mod registers one display mode, one panel tab and one settings section
   const dispose = activate(host.folium);
   assert.equal(host.registered.visualizers.length, 1);
   assert.equal(host.registered.playerPanelTabs.length, 1);
-  assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['translationFirst', 'bilingual', 'ruby', 'caption', 'captionTop', 'poster']);
+  assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'bilingual', 'ruby', 'strip', 'poster']);
   assert.equal(host.registered.settingsSections[0].settings.find(setting => setting.key === 'poster').defaultValue, false);
-  // Folia draws a mod's select setting as a bare system dropdown, so every setting is a switch
-  assert.deepEqual([...new Set(host.registered.settingsSections[0].settings.map(setting => setting.type))], ['boolean']);
   assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby']);
   dispose();
 });

@@ -98,12 +98,12 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     const time = ctx.currentTime.get(), index = indexAt(time);
     // the romanization row is Folia's to switch: it follows the host's subtitle setting
     const romanized = !strip && hostShowsRomanization(display);
-    const key = JSON.stringify([settings.translationFirst, settings.bilingual, settings.ruby, romanized]);
+    const key = JSON.stringify([settings.primary, settings.bilingual, settings.ruby, romanized]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
       const options = strip
         ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
-        : { primary: settings.translationFirst === true ? 'translation' : 'original', bilingual: settings.bilingual !== false, ruby: settings.ruby !== false, romaji: romanized };
+        : { primary: settings.primary === 'translation' ? 'translation' : 'original', bilingual: settings.bilingual !== false, ruby: settings.ruby !== false, romaji: romanized };
       const addLine = (line, current) => {
         if (!line) return;
         const row = document.createElement(!poster && !strip && !ctx.isPreview && folium.env.context === 'main' ? 'button' : 'div');

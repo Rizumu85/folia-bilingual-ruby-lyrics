@@ -11,14 +11,31 @@ export default function activate(folium) {
   const section = folium.registries.settingsSections.register({
     id: 'display',
     label: label('双语 · 注音歌词', 'Bilingual & ruby lyrics'),
-    // Switches only: Folia draws a mod's "select" setting as a bare system dropdown, which does
-    // not match the rest of its settings.
     settings: [
-      { key: 'translationFirst', type: 'boolean', label: label('译文为主', 'Translation first'), description: label('大字显示译文，原文放在下面。关闭时大字显示原文。', 'Show the translation large, with the original below it. When off, the original is the large line.'), defaultValue: false },
+      {
+        key: 'primary',
+        type: 'select',
+        label: label('主要显示', 'Primary language'),
+        defaultValue: 'original',
+        options: [
+          { value: 'original', label: label('原文', 'Original') },
+          { value: 'translation', label: label('译文', 'Translation') },
+        ],
+      },
       { key: 'bilingual', type: 'boolean', label: label('双语显示', 'Show both languages'), defaultValue: true },
       { key: 'ruby', type: 'boolean', label: label('显示注音', 'Show ruby annotations'), defaultValue: true },
-      { key: 'caption', type: 'boolean', label: label('注音字幕条', 'Ruby caption'), description: label('使用 Folia 自带的显示模式时，在画面上加一条带注音的当前歌词。只对有内嵌注音的歌生效。', 'While one of the display modes built into Folia is in use, adds the line being sung with its readings as a caption. Only for songs with embedded readings.'), defaultValue: false },
-      { key: 'captionTop', type: 'boolean', label: label('字幕条放在顶部', 'Caption at the top'), description: label('关闭时放在底部，Folia 自己的字幕上方。', 'When off, the caption sits at the bottom, above the subtitles of Folia.'), defaultValue: false },
+      {
+        key: 'strip',
+        type: 'select',
+        label: label('注音字幕条', 'Ruby caption'),
+        description: label('使用 Folia 自带的显示模式时，在画面上加一条带注音的当前歌词。只对有内嵌注音的歌生效。底部是指 Folia 自己的字幕上方。', 'While one of the display modes built into Folia is in use, adds the line being sung with its readings as a caption. Only for songs with embedded readings. Bottom means just above the subtitles of Folia.'),
+        defaultValue: 'off',
+        options: [
+          { value: 'off', label: label('关', 'Off') },
+          { value: 'bottom', label: label('底部', 'Bottom') },
+          { value: 'top', label: label('顶部', 'Top') },
+        ],
+      },
       {
         key: 'poster',
         type: 'boolean',
@@ -72,8 +89,8 @@ export default function activate(folium) {
       if (!hasReadings(ctx.lines)) return () => {};
       let dispose = null, shown = null;
       const sync = () => {
-        const values = params.get(), position = values.caption === true ? (values.captionTop === true ? 'top' : 'bottom') : null;
-        const wanted = position && modeStore?.getState().visualizerMode !== OWN_MODE ? position : null;
+        const position = params.get().strip;
+        const wanted = (position === 'top' || position === 'bottom') && modeStore?.getState().visualizerMode !== OWN_MODE ? position : null;
         if (wanted === shown) return;
         dispose?.(); dispose = null; shown = wanted;
         if (wanted) dispose = mountReading(container, ctx, folium, params, { strip: wanted });

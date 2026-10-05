@@ -80,7 +80,10 @@ Folia 自带的显示模式不画注音。打开这个选项后，使用那些�
 
 ## 开发
 
+源码在 `src/`，Folia 加载的 `bilingual-ruby-lyrics/client.mjs` 和 `main.cjs` 是由它们生成的单文件，不要直接改。做成单文件是因为 Folia 重载模组时只重新加载入口文件，入口再用相对路径引入的其他文件会沿用旧的，更新后不重启就会新旧代码混用。
+
 ```text
+node tools/build.mjs                # 由 src/ 生成 Folia 加载的两个文件
 node --test test/mod.test.mjs       # 模组逻辑的测试，歌词都是自造的例子
 python tools/make_preview.py        # 重新生成介绍图
 ```

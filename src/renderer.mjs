@@ -21,7 +21,8 @@ const CSS = `
   .reading.poster .near { font-size:clamp(15px,4cqw,28px); line-height:1.65; }
   .reading.poster .secondary { font-size:.55em; margin-top:10px; }
   .reading.strip { height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.35); }
-  .reading.strip.bottom { bottom:clamp(190px,27vh,300px); }
+  /* Folia's own subtitles sit about 110px up and take up to two rows: stay just above them */
+  .reading.strip.bottom { bottom:clamp(176px,21vh,220px); }
   .reading.strip.top { top:clamp(64px,11vh,120px); }
   .reading.strip .current { font-size:clamp(18px,2.3vw,34px); font-weight:500; line-height:1.9; }
 `;

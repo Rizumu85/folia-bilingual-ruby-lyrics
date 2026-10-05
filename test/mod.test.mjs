@@ -1,14 +1,21 @@
 // Tests for the mod's own logic. All lyric text here is made up.
-// Run: node --test test/mod.test.mjs
+// The logic is tested from src/; activation and the file reader are tested on the built files
+// Folia actually loads. Run: node --test test/mod.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pairBilingual } from '../bilingual-ruby-lyrics/lyrics.mjs';
-import { parseFaKara } from '../bilingual-ruby-lyrics/fa-kara.mjs';
-import { parseId3 } from '../bilingual-ruby-lyrics/id3.mjs';
-import { createIntegration } from '../bilingual-ruby-lyrics/integration.mjs';
-import { romanizeLine } from '../bilingual-ruby-lyrics/romaji.mjs';
-import { readEmbeddedLyrics } from '../bilingual-ruby-lyrics/tags.mjs';
+import { pairBilingual } from '../src/lyrics.mjs';
+import { parseFaKara } from '../src/fa-kara.mjs';
+import { parseId3 } from '../src/id3.mjs';
+import { createIntegration } from '../src/integration.mjs';
+import { romanizeLine } from '../src/romaji.mjs';
+import { readEmbeddedLyrics } from '../src/tags.mjs';
 import activate from '../bilingual-ruby-lyrics/client.mjs';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { createRequire } from 'node:module';
+import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 
 const line = (fullText, startTime, extra = {}) => ({ fullText, startTime, endTime: startTime + 2, words: [], ...extra });
 const rubyOf = lines => lines.map(item => [item.fullText, (item.words || []).flatMap(word => word.syllables || []).filter(part => part.ruby?.length).map(part => part.text + '=' + part.ruby.map(r => r.text).join(''))]);
@@ -120,6 +127,32 @@ test('Ruby lyrics are read from the ID3 chunk of a WAV file and the APE tag at t
   const footer = [...Buffer.from('APETAGEX'), ...le(2000, 4), ...le(items.length + 32, 4), ...le(1, 4), ...new Array(12).fill(0)];
   const apeFile = [...Buffer.from('wvpk'), ...new Array(40).fill(9), ...items, ...footer];
   assert.deepEqual((await readEmbeddedLyrics(...reader(apeFile))).map(item => item.text), [RUBY_TEXT]);
+});
+
+const HERE = path.dirname(fileURLToPath(import.meta.url));
+
+test('the files Folia loads are what the sources build, each in one file', () => {
+  const check = spawnSync(process.execPath, [path.join(HERE, '..', 'tools', 'build.mjs'), '--check'], { encoding: 'utf8' });
+  assert.equal(check.status, 0, check.stderr);
+  for (const name of ['client.mjs', 'main.cjs']) {
+    const text = fs.readFileSync(path.join(HERE, '..', 'bilingual-ruby-lyrics', name), 'utf8');
+    // a helper loaded by a relative path would survive a reload of the mod and run stale
+    assert.doesNotMatch(text, /^import |\bimport\(|require\('\.\.?\//m, name + ' loads another file of the mod');
+  }
+});
+
+test('the built main entry reads the Ruby lyrics out of a file on disk', async () => {
+  const comment = text => { const data = [...Buffer.from(text)]; return [...le(data.length, 4), ...data]; };
+  const comments = [...le(4, 4), ...Buffer.from('test'), ...le(1, 4), ...comment('RUBY_LYRICS=' + RUBY_TEXT)];
+  const file = path.join(fs.mkdtempSync(path.join(os.tmpdir(), 'ruby-mod-')), 'made-up.flac');
+  fs.writeFileSync(file, Uint8Array.from([...Buffer.from('fLaC'), 4 | 128, ...be(comments.length, 3), ...comments, 255, 248]));
+  const handlers = {};
+  createRequire(import.meta.url)('../bilingual-ruby-lyrics/main.cjs')({ rpc: { handle: (name, handler) => { handlers[name] = handler; } } });
+  try {
+    const found = await handlers.readEmbedded({ audioPath: file });
+    assert.deepEqual(found.map(item => [item.kind, item.text]), [['ruby', RUBY_TEXT]]);
+    assert.deepEqual(await handlers.readEmbedded({ audioPath: file + '.txt' }), []);
+  } finally { fs.rmSync(path.dirname(file), { recursive: true, force: true }); }
 });
 
 // just enough of the host for the mod to activate

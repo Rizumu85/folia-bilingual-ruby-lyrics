@@ -43,14 +43,14 @@ export function mountPanel(container, params) {
   const isOn = (values, key) => key === 'poster' ? values.poster === true : values[key] !== false;
   const refresh = () => {
     const values = params.get();
-    const primary = values.primary || 'original';
+    const primary = values.translationFirst === true ? 'translation' : 'original';
     for (const button of root.querySelectorAll('[data-language]')) button.setAttribute('aria-pressed', String(button.dataset.language === primary));
-    const strip = values.strip === 'top' || values.strip === 'bottom' ? values.strip : 'off';
+    const strip = values.caption === true ? (values.captionTop === true ? 'top' : 'bottom') : 'off';
     for (const button of root.querySelectorAll('[data-strip]')) button.setAttribute('aria-pressed', String(button.dataset.strip === strip));
     for (const button of root.querySelectorAll('[data-switch]')) button.setAttribute('aria-checked', String(isOn(values, button.dataset.switch)));
   };
-  for (const button of root.querySelectorAll('[data-language]')) button.addEventListener('click', () => params.set({ primary: button.dataset.language }));
-  for (const button of root.querySelectorAll('[data-strip]')) button.addEventListener('click', () => params.set({ strip: button.dataset.strip }));
+  for (const button of root.querySelectorAll('[data-language]')) button.addEventListener('click', () => params.set({ translationFirst: button.dataset.language === 'translation' }));
+  for (const button of root.querySelectorAll('[data-strip]')) button.addEventListener('click', () => params.set(button.dataset.strip === 'off' ? { caption: false } : { caption: true, captionTop: button.dataset.strip === 'top' }));
   for (const button of root.querySelectorAll('[data-switch]')) button.addEventListener('click', () => params.set({ [button.dataset.switch]: !isOn(params.get(), button.dataset.switch) }));
   container.append(style, root);
   refresh();

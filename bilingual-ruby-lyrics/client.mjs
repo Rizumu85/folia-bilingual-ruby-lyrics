@@ -25,6 +25,13 @@ export default function activate(folium) {
       { key: 'bilingual', type: 'boolean', label: label('双语显示', 'Show both languages'), defaultValue: true },
       { key: 'ruby', type: 'boolean', label: label('显示注音', 'Show ruby annotations'), defaultValue: true },
       {
+        key: 'romaji',
+        type: 'boolean',
+        label: label('显示罗马音', 'Show romanization'),
+        description: label('在本模组的显示模式里，当前这句下面加一行罗马音。罗马音由内嵌注音自动拼出；Folia 自带的显示模式由 Folia 自己的“字幕内容”设置决定是否显示。', 'Adds a romanization row under the current line in the display mode of this mod. It is spelled from the embedded readings; the display modes built into Folia follow the subtitle content setting of Folia.'),
+        defaultValue: false,
+      },
+      {
         key: 'poster',
         type: 'boolean',
         label: label('海报歌词（实验性）', 'Poster lyrics (experimental)'),
@@ -83,6 +90,7 @@ export default function activate(folium) {
   });
   toggle('bilingual', 'toggle-bilingual', '双语显示', 'bilingual lyrics', ['bilingual', '双语', '译文'], true);
   toggle('ruby', 'toggle-ruby', '注音显示', 'ruby annotations', ['ruby', 'furigana', '假名', '注音'], true);
+  toggle('romaji', 'toggle-romaji', '罗马音显示', 'romanization', ['romaji', 'romanization', '罗马音', '罗马字'], false);
 
   return () => integration.dispose();
 }

@@ -8,6 +8,7 @@ const CSS = `
   .reading .near { color:var(--reading-secondary); font-size:clamp(17px,2.2vw,29px); opacity:.55; }
   .reading .current { font-size:clamp(25px,4.4vw,62px); font-weight:600; }
   .reading .secondary { font-size:.52em; font-weight:400; color:var(--reading-secondary); margin-top:8px; line-height:2; }
+  .reading .romaji { font-size:.42em; font-weight:400; color:var(--reading-secondary); line-height:1.6; letter-spacing:.02em; }
   .reading ruby { ruby-position:over; ruby-align:center; }
   .reading rt { font-size:.38em; font-weight:400; line-height:1.15; letter-spacing:.03em; }
   .reading .timed { color:var(--reading-secondary); }
@@ -74,10 +75,10 @@ export function mountReading(container, ctx, folium, params, { poster = false } 
     // The wall remains visible outside the player; showText belongs to the player stage.
     root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : display.visualizerOpacity ?? 1);
     const time = ctx.currentTime.get(), index = indexAt(time);
-    const key = JSON.stringify([settings.primary, settings.bilingual, settings.ruby]);
+    const key = JSON.stringify([settings.primary, settings.bilingual, settings.ruby, settings.romaji]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
-      const options = { primary: settings.primary || 'original', bilingual: settings.bilingual !== false, ruby: settings.ruby !== false };
+      const options = { primary: settings.primary || 'original', bilingual: settings.bilingual !== false, ruby: settings.ruby !== false, romaji: settings.romaji === true };
       const addLine = (line, current) => {
         if (!line) return;
         const row = document.createElement(!poster && !ctx.isPreview && folium.env.context === 'main' ? 'button' : 'div');
@@ -91,11 +92,16 @@ export function mountReading(container, ctx, folium, params, { poster = false } 
         if (translated) main.textContent = line.translation;
         else appendOriginal(main, line, options.ruby && current, current ? timed : []);
         row.append(main);
+        // the romanization goes with the original, wherever that is drawn
+        const romaji = current && options.romaji && line.romanization ? document.createElement('div') : null;
+        if (romaji) { romaji.className = 'romaji'; romaji.textContent = line.romanization; }
+        if (romaji && !translated) row.append(romaji);
         if (current && options.bilingual && line.translation) {
           const secondary = document.createElement('div'); secondary.className = 'secondary';
           if (translated) appendOriginal(secondary, line, options.ruby, timed);
           else secondary.textContent = line.translation;
           row.append(secondary);
+          if (romaji && translated) row.append(romaji);
         }
         root.append(row);
       };

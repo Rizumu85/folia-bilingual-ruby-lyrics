@@ -6,6 +6,7 @@ import { pairBilingual } from '../bilingual-ruby-lyrics/lyrics.mjs';
 import { parseFaKara } from '../bilingual-ruby-lyrics/fa-kara.mjs';
 import { parseId3 } from '../bilingual-ruby-lyrics/id3.mjs';
 import { createIntegration } from '../bilingual-ruby-lyrics/integration.mjs';
+import { romanizeLine } from '../bilingual-ruby-lyrics/romaji.mjs';
 import activate from '../bilingual-ruby-lyrics/client.mjs';
 
 const line = (fullText, startTime, extra = {}) => ({ fullText, startTime, endTime: startTime + 2, words: [], ...extra });
@@ -35,6 +36,30 @@ test('a reading stays on its own chunk and off the translation line sharing the 
 test('a reading may cover text that is not kanji, in katakana', () => {
   const lrc = ['[00:01:00]夜の手[00:02:00]を[00:03:00]', '@Offset=0', '@Ruby1=夜の手,[00:00:00]ナイトハンド[00:01:00],[00:01:00],[00:01:00]', ''].join('\n');
   assert.deepEqual(rubyOf(parseFaKara(lrc).lines), [['夜の手を', ['夜の手=ナイトハンド']]]);
+});
+
+const firstLine = lrc => parseFaKara(lrc).lines[0];
+
+test('a line is romanized from its readings, with particles as they are said', () => {
+  const lrc = ['[00:01:00]君[00:01:50]は[00:02:00]窓[00:02:50]の[00:03:00]外[00:03:50]へ[00:04:00]', '@Offset=0',
+    '@Ruby1=君,[00:00:00]きみ[00:00:50]', '@Ruby2=窓,[00:00:00]まど[00:00:50]', '@Ruby3=外,[00:00:00]そと[00:00:50]', ''].join('\n');
+  assert.equal(romanizeLine(firstLine(lrc)), 'kimi wa mado no soto e');
+});
+
+test('a special reading, doubled consonants, long marks and loanword sounds are spelled as sung', () => {
+  const special = ['[00:01:00]運命[00:02:00]を[00:02:50]待[00:03:00]って[00:04:00]', '@Offset=0', '@Ruby1=運命,[00:00:00]さだめ[00:01:00]', '@Ruby2=待,[00:00:00]ま[00:00:50]', ''].join('\n');
+  assert.equal(romanizeLine(firstLine(special)), 'sadame o matte');
+  const ending = ['[00:01:00]始[00:01:50]まり[00:02:00]の[00:02:50]歌[00:03:00]', '@Offset=0', '@Ruby1=始,[00:00:00]はじ[00:00:50]', '@Ruby2=歌,[00:00:00]うた[00:00:50]', ''].join('\n');
+  assert.equal(romanizeLine(firstLine(ending)), 'hajimari no uta');
+  const loan = ['[00:01:00]夜の手[00:02:00]パーティー[00:03:00]しんや[00:04:00]', '@Offset=0', '@Ruby1=夜の手,[00:00:00]ナイトハンド[00:01:00]', ''].join('\n');
+  assert.equal(romanizeLine(firstLine(loan)).replace(/[ ']/g, ''), 'naitohandopaatiishinya');
+});
+
+test('Hangul is romanized from its readings, and lines with nothing to spell get no romanization', () => {
+  const korean = ['[00:01:00]바[00:01:50]다[00:02:00] [00:02:10]가[00:03:00]', '@Offset=0', '@Ruby1=바,[00:00:00]ba[00:00:50]', '@Ruby2=다,[00:00:00]da[00:00:50]', '@Ruby3=가,[00:00:00]ga[00:00:50]', ''].join('\n');
+  assert.equal(romanizeLine(firstLine(korean)), 'bada ga');
+  assert.equal(romanizeLine({ fullText: 'Night parade', words: [{ text: 'Night parade', startTime: 1, endTime: 2 }] }), undefined);
+  assert.equal(romanizeLine({ fullText: '窗外的雨', words: [{ text: '窗外的雨', startTime: 1, endTime: 2 }] }), undefined);
 });
 
 // ID3v2.4 tag made of the given frames: [id, payload bytes]
@@ -75,9 +100,9 @@ test('the mod registers one display mode, one panel tab and one settings section
   const dispose = activate(host.folium);
   assert.equal(host.registered.visualizers.length, 1);
   assert.equal(host.registered.playerPanelTabs.length, 1);
-  assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'bilingual', 'ruby', 'poster']);
+  assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'bilingual', 'ruby', 'romaji', 'poster']);
   assert.equal(host.registered.settingsSections[0].settings.find(setting => setting.key === 'poster').defaultValue, false);
-  assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby']);
+  assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby', 'toggle-romaji']);
   dispose();
 });
 

@@ -1,6 +1,7 @@
 import { pairBilingual } from './lyrics.mjs';
 import { readLocalSong, songIdentity, readLocalEmbedded } from './local-song.mjs';
 import { parseFaKara } from './fa-kara.mjs';
+import { withRomanization } from './romaji.mjs';
 
 const cleanHints = lines => lines.map(({renderHints,...line}) => line);
 const translationsOf = line => (line?.alternateTexts || []).filter(item => item?.role==='translation' && item.text);
@@ -79,7 +80,8 @@ export function createIntegration(folium, {readEmbedded = record => readLocalEmb
         state={song,embedded:false,error:null,ready:true};
         return;
       }
-      const lines=cleanHints(carryTranslations(pairBilingual(rich.lines),base?.lines));
+      // Folia's own modes show this line when its subtitle setting asks for romanization.
+      const lines=withRomanization(cleanHints(carryTranslations(pairBilingual(rich.lines),base?.lines)));
       applied={...(base || {}),lines,isWordByWord:rich.isWordByWord ?? base?.isWordByWord ?? false};
       ownWrite=true;
       try {store.getState().setLyricsState(applied);store.getState().setCurrentLineIndex(-1);}

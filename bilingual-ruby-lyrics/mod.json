@@ -2,10 +2,10 @@
   "folium": 1,
   "id": "bilingual-ruby-lyrics",
   "name": "双语 · 注音歌词",
-  "version": "1.0.0",
+  "version": "1.1.0",
   "author": "Rizum",
-  "description": "把同一时间点的原文和译文配成一对显示，并读取 MP3 内嵌的 TimeTag/NicoKara Ruby 歌词（[MM:SS:CC] + @RubyN），在歌词上方显示逐字注音，例如日语汉字的振假名、韩语的罗马音。",
-  "folia": "=0.7.12",
+  "description": "把同一时间点的原文和译文配成一对显示，并读取 MP3 内嵌的 TimeTag/NicoKara Ruby 歌词（[MM:SS:CC] + @RubyN），在歌词上方显示逐字注音，例如日语汉字的振假名、韩语的罗马音；还会按注音拼出整句罗马音，交给 Folia 的罗马音字幕。",
+  "folia": ">=0.7.12 <=0.7.13",
   "main": "main.cjs",
   "client": "client.mjs",
   "permissions": [

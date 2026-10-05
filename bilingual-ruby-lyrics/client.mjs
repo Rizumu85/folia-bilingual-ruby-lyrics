@@ -189,10 +189,7 @@ const CSS = `
   .reading.poster .current { font-size:clamp(20px,6.5cqw,48px); line-height:1.85; }
   .reading.poster .near { font-size:clamp(15px,4cqw,28px); line-height:1.65; }
   .reading.poster .secondary { font-size:.55em; margin-top:10px; }
-  .reading.strip { height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; isolation:isolate; text-shadow:0 1px 3px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.35); }
-  .reading.strip .line { position:relative; }
-  /* the same soft backing Folia puts behind its own subtitles, so the caption stays readable over the animation */
-  .reading.strip.plate .line::before { content:''; position:absolute; inset:-18px -40px; z-index:-1; filter:blur(36px); background:radial-gradient(ellipse 115% 130% at center, color-mix(in srgb, var(--reading-back) 96%, transparent) 0%, color-mix(in srgb, var(--reading-back) 78%, transparent) 62%, transparent 100%); }
+  .reading.strip { height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; text-shadow:0 1px 3px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.35); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }
@@ -264,11 +261,6 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     root.style.setProperty('--reading-primary', theme.primaryColor);
     root.style.setProperty('--reading-secondary', theme.secondaryColor);
     root.style.setProperty('--reading-accent', theme.accentColor);
-    if (strip) {
-      // follows Folia's own "subtitle background" setting
-      root.style.setProperty('--reading-back', theme.backgroundColor || '#000');
-      root.classList.toggle('plate', display.subtitleOverlayBackground !== false);
-    }
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
     // The wall remains visible outside the player; showText belongs to the player stage.
     root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);

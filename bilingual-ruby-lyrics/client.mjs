@@ -276,10 +276,11 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
       // Sit right above Folia's own subtitles. They start 112px up (32px while the player
       // controls are hidden) and are one row tall, two when romanization and translation are
       // both shown, none when subtitles are off; a row is the subtitle font at 1.5 line height.
+      // The caption's own line box has empty room under the text, so it may dip 12px into the row.
       const mode = display.showSubtitleTranslation === false ? 'none' : display.subtitleContentMode;
       const rows = mode === 'none' ? 0 : mode === 'translation' && hostShowsRomanization(display) ? 2 : 1;
       const font = Math.min(20, Math.max(18, .026 * (root.ownerDocument.defaultView?.innerWidth || 1280))) * (display.subtitleFontScale || 1);
-      root.style.bottom = Math.round((display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 + (rows ? 4 : 0)) + 'px';
+      root.style.bottom = Math.round((display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 - (rows ? 12 : 0)) + 'px';
     }
     const time = ctx.currentTime.get(), index = indexAt(time);
     // the romanization row is Folia's to switch: it follows the host's subtitle setting

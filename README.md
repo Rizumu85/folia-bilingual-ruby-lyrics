@@ -52,7 +52,7 @@ Folia 自带的显示模式不画注音。打开这个选项后，使用那些�
 
 带注音的歌词直接放在普通歌词的那个标签里也能读到。CAF 没有通用的歌词标签，不支持。
 
-可以用 [lyric-timing-kit](https://github.com/Rizumu85/lyric-timing-kit) 自动生成并写入，也可以用任何能导出 NicoKara/TimeTag 格式的打轴软件。
+可以用任何能导出 NicoKara/TimeTag 格式的打轴软件生成，再按下表写进文件的标签。
 
 没有内嵌 Ruby 歌词的歌，模组照常显示 Folia 自己取到的歌词，双语配对仍然有效，只是没有注音。
 

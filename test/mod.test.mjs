@@ -182,7 +182,11 @@ test('the mod registers one display mode, one panel tab and one settings section
   assert.equal(host.registered.playerPanelTabs.length, 1);
   assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'bilingual', 'ruby', 'strip', 'poster']);
   assert.equal(host.registered.settingsSections[0].settings.find(setting => setting.key === 'poster').defaultValue, false);
-  assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby']);
+  assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby', 'caption-position', 'toggle-caption']);
+  // the position command flips bottom and top, and switches the caption on when it is off
+  const position = host.registered.commands.find(command => command.id === 'caption-position');
+  const after = () => { position.run(); return host.params.get().strip; };
+  assert.deepEqual([after(), after(), after()], ['bottom', 'top', 'bottom']);
   dispose();
 });
 

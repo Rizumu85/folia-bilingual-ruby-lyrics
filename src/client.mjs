@@ -118,6 +118,19 @@ export default function activate(folium) {
   });
   toggle('bilingual', 'toggle-bilingual', '双语显示', 'bilingual lyrics', ['bilingual', '双语', '译文'], true);
   toggle('ruby', 'toggle-ruby', '注音显示', 'ruby annotations', ['ruby', 'furigana', '假名', '注音'], true);
+  const caption = (id, zh, en, next) => folium.registries.commands.register({
+    id,
+    label: label(zh, en),
+    keywords: ['caption', 'ruby', 'furigana', '字幕条', '注音', '底部', '顶部'],
+    run: () => {
+      const position = next(params.get().strip);
+      params.set({ strip: position });
+      return '注音字幕条：' + { off: '关', bottom: '底部', top: '顶部' }[position];
+    },
+  });
+  // bottom <-> top; turns the caption on (at the bottom) when it is off
+  caption('caption-position', '注音字幕条：切换底部 / 顶部', 'Ruby caption: bottom / top', now => now === 'bottom' ? 'top' : 'bottom');
+  caption('toggle-caption', '切换注音字幕条', 'Toggle ruby caption', now => now === 'top' || now === 'bottom' ? 'off' : 'bottom');
 
   return () => integration.dispose();
 }

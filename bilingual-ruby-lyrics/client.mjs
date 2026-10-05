@@ -25,11 +25,16 @@ export default function activate(folium) {
       { key: 'bilingual', type: 'boolean', label: label('双语显示', 'Show both languages'), defaultValue: true },
       { key: 'ruby', type: 'boolean', label: label('显示注音', 'Show ruby annotations'), defaultValue: true },
       {
-        key: 'romaji',
-        type: 'boolean',
-        label: label('显示罗马音', 'Show romanization'),
-        description: label('在本模组的显示模式里，当前这句下面加一行罗马音。罗马音由内嵌注音自动拼出；Folia 自带的显示模式由 Folia 自己的“字幕内容”设置决定是否显示。', 'Adds a romanization row under the current line in the display mode of this mod. It is spelled from the embedded readings; the display modes built into Folia follow the subtitle content setting of Folia.'),
-        defaultValue: false,
+        key: 'strip',
+        type: 'select',
+        label: label('注音字幕条', 'Ruby caption'),
+        description: label('使用 Folia 自带的显示模式时，在画面上加一条带注音的当前歌词。只对有内嵌注音的歌生效。', 'While one of the display modes built into Folia is in use, adds the line being sung with its readings as a caption. Only for songs with embedded readings.'),
+        defaultValue: 'off',
+        options: [
+          { value: 'off', label: label('关', 'Off') },
+          { value: 'bottom', label: label('底部', 'Bottom') },
+          { value: 'top', label: label('顶部', 'Top') },
+        ],
       },
       {
         key: 'poster',
@@ -72,6 +77,29 @@ export default function activate(folium) {
       return () => { unsubscribe(); dispose?.(); dispose = null; };
     },
   });
+  // The display modes built into Folia do not draw readings; this caption does, on top of them.
+  const OWN_MODE = 'mod:bilingual-ruby-lyrics:reading';
+  const modeStore = folium.internals.stores.visualizerSettings;
+  const hasReadings = lines => lines.some(line => line.words?.some(word => word.syllables?.some(unit => unit.ruby?.length)));
+  folium.registries.stageLayers.register({
+    id: 'ruby-caption',
+    slot: 'player.stage.front',
+    interactive: false,
+    mount: (container, ctx) => {
+      if (!hasReadings(ctx.lines)) return () => {};
+      let dispose = null, shown = null;
+      const sync = () => {
+        const position = params.get().strip;
+        const wanted = (position === 'top' || position === 'bottom') && modeStore?.getState().visualizerMode !== OWN_MODE ? position : null;
+        if (wanted === shown) return;
+        dispose?.(); dispose = null; shown = wanted;
+        if (wanted) dispose = mountReading(container, ctx, folium, params, { strip: wanted });
+      };
+      sync();
+      const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe(sync);
+      return () => { unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
+    },
+  });
   folium.registries.playerPanelTabs.register({
     id: 'lyrics',
     label: label('双语 · 注音歌词', 'Bilingual & ruby lyrics'),
@@ -90,7 +118,6 @@ export default function activate(folium) {
   });
   toggle('bilingual', 'toggle-bilingual', '双语显示', 'bilingual lyrics', ['bilingual', '双语', '译文'], true);
   toggle('ruby', 'toggle-ruby', '注音显示', 'ruby annotations', ['ruby', 'furigana', '假名', '注音'], true);
-  toggle('romaji', 'toggle-romaji', '罗马音显示', 'romanization', ['romaji', 'romanization', '罗马音', '罗马字'], false);
 
   return () => integration.dispose();
 }

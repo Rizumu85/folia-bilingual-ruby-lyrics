@@ -1,4 +1,5 @@
 import { id3Header, parseId3, embeddedVersions } from './id3.mjs';
+import { readTagLyrics } from './tags.mjs';
 
 // Folia 0.7.12: the current carrier stores a UUID; its file path is in local_music.
 // This read-only lookup deliberately never upgrades, creates or writes the host database.
@@ -44,10 +45,14 @@ async function audioDirectory(record, getHandles = hostHandles) {
 }
 
 export async function readLocalEmbedded(record, rpc, getHandles = hostHandles) {
-  if (!record?.filePath || !/\.mp3$/i.test(record.filePath)) return [];
+  if (!record?.filePath || !/\.(mp3|flac|m4a)$/i.test(record.filePath)) return [];
   if (isAbsoluteAudioPath(record.filePath)) return rpc.call('readEmbedded', { audioPath: record.filePath });
   const { directory, fileName } = await audioDirectory(record, getHandles);
   const file = await (await directory.getFileHandle(fileName)).getFile();
+  if (!/\.mp3$/i.test(fileName)) {
+    const read = async (offset, length) => new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
+    return embeddedVersions(await readTagLyrics(read, file.size, fileName), fileName);
+  }
   const info = id3Header(new Uint8Array(await file.slice(0, 10).arrayBuffer()));
   if (!info.totalSize) return [];
   const bytes = new Uint8Array(await file.slice(0, info.totalSize).arrayBuffer());

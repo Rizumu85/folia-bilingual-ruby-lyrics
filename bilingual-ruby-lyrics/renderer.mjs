@@ -20,6 +20,10 @@ const CSS = `
   .reading.poster .current { font-size:clamp(20px,6.5cqw,48px); line-height:1.85; }
   .reading.poster .near { font-size:clamp(15px,4cqw,28px); line-height:1.65; }
   .reading.poster .secondary { font-size:.55em; margin-top:10px; }
+  .reading.strip { height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.35); }
+  .reading.strip.bottom { bottom:clamp(190px,27vh,300px); }
+  .reading.strip.top { top:clamp(64px,11vh,120px); }
+  .reading.strip .current { font-size:clamp(18px,2.3vw,34px); font-weight:500; line-height:1.9; }
 `;
 
 function appendOriginal(container, line, showRuby, timed) {
@@ -50,9 +54,25 @@ function appendOriginal(container, line, showRuby, timed) {
   }
 }
 
-export function mountReading(container, ctx, folium, params, { poster = false } = {}) {
+// Folia reports its two-row subtitle setting (romanization above translation) to mods as
+// 'translation'. The stored setting says which it is; it is read at most once a second.
+let twoRows = { at: -Infinity, value: false };
+const hostShowsRomanization = display => {
+  if (display.subtitleContentMode === 'romanization') return true;
+  if (display.subtitleContentMode !== 'translation') return false;
+  const now = Date.now();
+  if (now - twoRows.at > 1000) {
+    let value = false;
+    try { value = globalThis.localStorage?.getItem('subtitle_content_mode') === 'both'; } catch { /* no storage here */ }
+    twoRows = { at: now, value };
+  }
+  return twoRows.value;
+};
+
+// strip: only the line being sung, with its readings, as a caption over another display mode
+export function mountReading(container, ctx, folium, params, { poster = false, strip = null } = {}) {
   const style = document.createElement('style'); style.textContent = CSS;
-  const root = document.createElement('div'); root.className = poster ? 'reading poster' : 'reading';
+  const root = document.createElement('div'); root.className = strip ? 'reading strip ' + strip : poster ? 'reading poster' : 'reading';
   container.append(style, root);
   const lines = pairBilingual(ctx.lines);
   let previousIndex = -2, optionsKey = '', timed = [];
@@ -73,15 +93,19 @@ export function mountReading(container, ctx, folium, params, { poster = false } 
     root.style.setProperty('--reading-accent', theme.accentColor);
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
     // The wall remains visible outside the player; showText belongs to the player stage.
-    root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : display.visualizerOpacity ?? 1);
+    root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);
     const time = ctx.currentTime.get(), index = indexAt(time);
-    const key = JSON.stringify([settings.primary, settings.bilingual, settings.ruby, settings.romaji]);
+    // the romanization row is Folia's to switch: it follows the host's subtitle setting
+    const romanized = !strip && hostShowsRomanization(display);
+    const key = JSON.stringify([settings.primary, settings.bilingual, settings.ruby, romanized]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
-      const options = { primary: settings.primary || 'original', bilingual: settings.bilingual !== false, ruby: settings.ruby !== false, romaji: settings.romaji === true };
+      const options = strip
+        ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
+        : { primary: settings.primary || 'original', bilingual: settings.bilingual !== false, ruby: settings.ruby !== false, romaji: romanized };
       const addLine = (line, current) => {
         if (!line) return;
-        const row = document.createElement(!poster && !ctx.isPreview && folium.env.context === 'main' ? 'button' : 'div');
+        const row = document.createElement(!poster && !strip && !ctx.isPreview && folium.env.context === 'main' ? 'button' : 'div');
         row.className = current ? 'line current' : 'line near';
         if (row.tagName === 'BUTTON') {
           row.type = 'button'; row.title = '跳到这句歌词';
@@ -105,7 +129,8 @@ export function mountReading(container, ctx, folium, params, { poster = false } 
         }
         root.append(row);
       };
-      if (!lines.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = '这首歌暂无歌词'; root.append(empty); }
+      if (strip) addLine(lines[index], true);
+      else if (!lines.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = '这首歌暂无歌词'; root.append(empty); }
       else if (index < 0) {
         const next = lines.find(line => line.startTime > time);
         if (next) addLine(next, true);

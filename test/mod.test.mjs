@@ -7,6 +7,7 @@ import { parseFaKara } from '../bilingual-ruby-lyrics/fa-kara.mjs';
 import { parseId3 } from '../bilingual-ruby-lyrics/id3.mjs';
 import { createIntegration } from '../bilingual-ruby-lyrics/integration.mjs';
 import { romanizeLine } from '../bilingual-ruby-lyrics/romaji.mjs';
+import { readTagLyrics } from '../bilingual-ruby-lyrics/tags.mjs';
 import activate from '../bilingual-ruby-lyrics/client.mjs';
 
 const line = (fullText, startTime, extra = {}) => ({ fullText, startTime, endTime: startTime + 2, words: [], ...extra });
@@ -75,6 +76,27 @@ test('an empty frame and an undecodable lyric frame do not hide the readable lyr
   assert.deepEqual(parsed.lyrics.map(item => [item.descriptor, item.text]), [['TimeTag-Ruby', '[00:01:00]a[00:02:00]']]);
 });
 
+const be = (value, bytes) => Array.from({ length: bytes }, (_, index) => value / 256 ** (bytes - 1 - index) & 255);
+const le = (value, bytes) => be(value, bytes).reverse();
+const reader = bytes => [async (offset, length) => Uint8Array.from(bytes.slice(offset, offset + length)), bytes.length];
+const RUBY_TEXT = '[00:01:00]歌[00:02:00]\n@Ruby1=歌,[00:00:00]うた[00:01:00]';
+
+test('Ruby lyrics are read from the comment block of a FLAC file', async () => {
+  const comment = text => { const data = [...Buffer.from(text)]; return [...le(data.length, 4), ...data]; };
+  const comments = [...le(4, 4), ...Buffer.from('test'), ...le(2, 4), ...comment('TITLE=x'), ...comment('ruby_lyrics=' + RUBY_TEXT)];
+  const block = (type, body, last) => [type | (last ? 128 : 0), ...be(body.length, 3), ...body];
+  const file = [...Buffer.from('fLaC'), ...block(0, new Array(34).fill(0), false), ...block(4, comments, true), 255, 248, 1, 2];
+  assert.deepEqual((await readTagLyrics(...reader(file), 'a.flac')).map(item => item.text), [RUBY_TEXT]);
+});
+
+test('Ruby lyrics are read from the tags of an M4A file, wherever the tag atom sits', async () => {
+  const atom = (type, body) => [...be(body.length + 8, 4), ...Buffer.from(type, 'latin1'), ...body];
+  const freeform = atom('----', [...atom('mean', [0, 0, 0, 0, ...Buffer.from('com.apple.iTunes')]), ...atom('name', [0, 0, 0, 0, ...Buffer.from('RUBY_LYRICS')]), ...atom('data', [0, 0, 0, 1, 0, 0, 0, 0, ...Buffer.from(RUBY_TEXT)])]);
+  const moov = atom('moov', [...atom('mvhd', new Array(20).fill(0)), ...atom('udta', atom('meta', [0, 0, 0, 0, ...atom('hdlr', new Array(25).fill(0)), ...atom('ilst', [...atom('\u00a9nam', atom('data', [0, 0, 0, 1, 0, 0, 0, 0, 120])), ...freeform])]))]);
+  const file = [...atom('ftyp', [...Buffer.from('M4A ')]), ...atom('mdat', [1, 2, 3, 4, 5]), ...moov];
+  assert.deepEqual((await readTagLyrics(...reader(file), 'a.m4a')).map(item => item.text), [RUBY_TEXT]);
+});
+
 // just enough of the host for the mod to activate
 function fakeHost({ context = 'main' } = {}) {
   const registered = {}, logs = [], toasts = [], listeners = new Set();
@@ -87,7 +109,7 @@ function fakeHost({ context = 'main' } = {}) {
   const folium = {
     host: { folium: { minor: 4 } }, env: { context },
     registries: new Proxy({}, { get: (_, name) => registry(name) }),
-    internals: { stores: { playback, lyricSettings: { getState: () => ({}), subscribe: () => () => {} } } },
+    internals: { stores: { playback, lyricSettings: { getState: () => ({}), subscribe: () => () => {} }, visualizerSettings: { getState: () => ({ visualizerMode: 'classic' }), subscribe: () => () => {} } } },
     log: { error: message => logs.push(message) }, ui: { toast: message => toasts.push(message) },
     rpc: { call: async () => [] }, playback: {}, theme: {},
   };
@@ -100,18 +122,18 @@ test('the mod registers one display mode, one panel tab and one settings section
   const dispose = activate(host.folium);
   assert.equal(host.registered.visualizers.length, 1);
   assert.equal(host.registered.playerPanelTabs.length, 1);
-  assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'bilingual', 'ruby', 'romaji', 'poster']);
+  assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'bilingual', 'ruby', 'strip', 'poster']);
   assert.equal(host.registered.settingsSections[0].settings.find(setting => setting.key === 'poster').defaultValue, false);
-  assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby', 'toggle-romaji']);
+  assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby']);
   dispose();
 });
 
-test('poster lyrics touch nothing until the setting is switched on', () => {
+test('poster lyrics and the ruby caption touch nothing until their settings are switched on', () => {
   const host = fakeHost();
   activate(host.folium);
   const container = new Proxy({}, { get(_, name) { throw new Error('the poster layer touched its container (' + String(name) + ') while switched off'); } });
-  const release = host.registered.stageLayers[0].mount(container, { lines: [], song: null });
-  release();
+  const lines = [{ words: [{ syllables: [{ text: '歌', ruby: [{ text: 'うた' }] }] }] }];
+  for (const layer of host.registered.stageLayers) layer.mount(container, { lines, song: null })();
 });
 
 test('a failed read of the embedded lyrics is reported once and not retried for the same song', async () => {

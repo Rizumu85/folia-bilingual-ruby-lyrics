@@ -25,9 +25,13 @@ export function mountPanel(container, params) {
         <span id="lyrics-ruby-label">显示注音</span>
         <button class="switch" type="button" role="switch" aria-labelledby="lyrics-ruby-label" aria-checked="true" data-switch="ruby"></button>
       </div>
-      <div class="row">
-        <span id="lyrics-romaji-label">显示罗马音</span>
-        <button class="switch" type="button" role="switch" aria-labelledby="lyrics-romaji-label" aria-checked="false" data-switch="romaji"></button>
+      <div class="field">
+        <span class="field-label" id="lyrics-strip-label">注音字幕条（用 Folia 自带的显示模式时）</span>
+        <div class="choices" role="group" aria-labelledby="lyrics-strip-label">
+          <button class="pill" type="button" data-strip="off" aria-pressed="true">关</button>
+          <button class="pill" type="button" data-strip="bottom" aria-pressed="false">底部</button>
+          <button class="pill" type="button" data-strip="top" aria-pressed="false">顶部</button>
+        </div>
       </div>
       <div class="row">
         <span id="lyrics-poster-label">海报歌词（实验性）</span>
@@ -35,15 +39,18 @@ export function mountPanel(container, params) {
       </div>
     </section>`;
 
-  // bilingual and ruby are on unless turned off; romanization and the poster override are off unless turned on
-  const isOn = (values, key) => key === 'poster' || key === 'romaji' ? values[key] === true : values[key] !== false;
+  // bilingual and ruby are on unless turned off; the poster override is off unless turned on
+  const isOn = (values, key) => key === 'poster' ? values.poster === true : values[key] !== false;
   const refresh = () => {
     const values = params.get();
     const primary = values.primary || 'original';
     for (const button of root.querySelectorAll('[data-language]')) button.setAttribute('aria-pressed', String(button.dataset.language === primary));
+    const strip = values.strip === 'top' || values.strip === 'bottom' ? values.strip : 'off';
+    for (const button of root.querySelectorAll('[data-strip]')) button.setAttribute('aria-pressed', String(button.dataset.strip === strip));
     for (const button of root.querySelectorAll('[data-switch]')) button.setAttribute('aria-checked', String(isOn(values, button.dataset.switch)));
   };
   for (const button of root.querySelectorAll('[data-language]')) button.addEventListener('click', () => params.set({ primary: button.dataset.language }));
+  for (const button of root.querySelectorAll('[data-strip]')) button.addEventListener('click', () => params.set({ strip: button.dataset.strip }));
   for (const button of root.querySelectorAll('[data-switch]')) button.addEventListener('click', () => params.set({ [button.dataset.switch]: !isOn(params.get(), button.dataset.switch) }));
   container.append(style, root);
   refresh();

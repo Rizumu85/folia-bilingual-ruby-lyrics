@@ -190,10 +190,10 @@ const CSS = `
   .reading.poster .near { font-size:clamp(15px,4cqw,28px); line-height:1.65; }
   .reading.poster .secondary { font-size:.55em; margin-top:10px; }
   .reading.strip { height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; text-shadow:0 1px 3px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.35); }
-  /* Folia's own subtitles sit about 110px up and take up to two rows: stay just above them */
-  .reading.strip.bottom { bottom:clamp(176px,21vh,220px); }
-  .reading.strip.top { top:clamp(64px,11vh,120px); }
-  .reading.strip .current { font-size:clamp(18px,2.3vw,34px); font-weight:500; line-height:1.9; }
+  /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
+  .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
+  .reading.strip.top { top:clamp(16px,3.5vh,40px); }
+  .reading.strip .current { font-size:clamp(18px,2.3vw,34px); font-weight:500; line-height:1.75; }
 `;
 
 function appendOriginal(container, line, showRuby, timed) {
@@ -264,6 +264,15 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
     // The wall remains visible outside the player; showText belongs to the player stage.
     root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);
+    if (strip === 'bottom') {
+      // Sit right above Folia's own subtitles. They start 112px up (32px while the player
+      // controls are hidden) and are one row tall, two when romanization and translation are
+      // both shown, none when subtitles are off; a row is the subtitle font at 1.5 line height.
+      const mode = display.showSubtitleTranslation === false ? 'none' : display.subtitleContentMode;
+      const rows = mode === 'none' ? 0 : mode === 'translation' && hostShowsRomanization(display) ? 2 : 1;
+      const font = Math.min(20, Math.max(18, .026 * (root.ownerDocument.defaultView?.innerWidth || 1280))) * (display.subtitleFontScale || 1);
+      root.style.bottom = Math.round((display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 + (rows ? 4 : 0)) + 'px';
+    }
     const time = ctx.currentTime.get(), index = indexAt(time);
     // the romanization row is Folia's to switch: it follows the host's subtitle setting
     const romanized = !strip && hostShowsRomanization(display);

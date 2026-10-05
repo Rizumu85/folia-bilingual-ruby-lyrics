@@ -182,11 +182,14 @@ test('the mod registers one display mode, one panel tab and one settings section
   assert.equal(host.registered.playerPanelTabs.length, 1);
   assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'bilingual', 'ruby', 'strip', 'poster']);
   assert.equal(host.registered.settingsSections[0].settings.find(setting => setting.key === 'poster').defaultValue, false);
-  assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby', 'caption-position', 'toggle-caption']);
-  // the position command flips bottom and top, and switches the caption on when it is off
-  const position = host.registered.commands.find(command => command.id === 'caption-position');
-  const after = () => { position.run(); return host.params.get().strip; };
-  assert.deepEqual([after(), after(), after()], ['bottom', 'top', 'bottom']);
+  assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-bilingual', 'toggle-ruby', 'caption']);
+  // the caption command goes bottom, top, off, and says so each time
+  const caption = host.registered.commands.find(command => command.id === 'caption');
+  const after = () => { caption.run(); return host.params.get().strip; };
+  assert.deepEqual([after(), after(), after(), after()], ['bottom', 'top', 'off', 'bottom']);
+  assert.deepEqual(host.toasts.slice(-2), ['注音字幕条：关', '注音字幕条：底部']);
+  host.registered.commands.find(command => command.id === 'toggle-ruby').run();
+  assert.equal(host.toasts.at(-1), '注音显示：关');
   dispose();
 });
 

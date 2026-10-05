@@ -7,7 +7,7 @@ import { parseFaKara } from '../bilingual-ruby-lyrics/fa-kara.mjs';
 import { parseId3 } from '../bilingual-ruby-lyrics/id3.mjs';
 import { createIntegration } from '../bilingual-ruby-lyrics/integration.mjs';
 import { romanizeLine } from '../bilingual-ruby-lyrics/romaji.mjs';
-import { readTagLyrics } from '../bilingual-ruby-lyrics/tags.mjs';
+import { readEmbeddedLyrics } from '../bilingual-ruby-lyrics/tags.mjs';
 import activate from '../bilingual-ruby-lyrics/client.mjs';
 
 const line = (fullText, startTime, extra = {}) => ({ fullText, startTime, endTime: startTime + 2, words: [], ...extra });
@@ -86,7 +86,7 @@ test('Ruby lyrics are read from the comment block of a FLAC file', async () => {
   const comments = [...le(4, 4), ...Buffer.from('test'), ...le(2, 4), ...comment('TITLE=x'), ...comment('ruby_lyrics=' + RUBY_TEXT)];
   const block = (type, body, last) => [type | (last ? 128 : 0), ...be(body.length, 3), ...body];
   const file = [...Buffer.from('fLaC'), ...block(0, new Array(34).fill(0), false), ...block(4, comments, true), 255, 248, 1, 2];
-  assert.deepEqual((await readTagLyrics(...reader(file), 'a.flac')).map(item => item.text), [RUBY_TEXT]);
+  assert.deepEqual((await readEmbeddedLyrics(...reader(file))).map(item => item.text), [RUBY_TEXT]);
 });
 
 test('Ruby lyrics are read from the tags of an M4A file, wherever the tag atom sits', async () => {
@@ -94,7 +94,32 @@ test('Ruby lyrics are read from the tags of an M4A file, wherever the tag atom s
   const freeform = atom('----', [...atom('mean', [0, 0, 0, 0, ...Buffer.from('com.apple.iTunes')]), ...atom('name', [0, 0, 0, 0, ...Buffer.from('RUBY_LYRICS')]), ...atom('data', [0, 0, 0, 1, 0, 0, 0, 0, ...Buffer.from(RUBY_TEXT)])]);
   const moov = atom('moov', [...atom('mvhd', new Array(20).fill(0)), ...atom('udta', atom('meta', [0, 0, 0, 0, ...atom('hdlr', new Array(25).fill(0)), ...atom('ilst', [...atom('\u00a9nam', atom('data', [0, 0, 0, 1, 0, 0, 0, 0, 120])), ...freeform])]))]);
   const file = [...atom('ftyp', [...Buffer.from('M4A ')]), ...atom('mdat', [1, 2, 3, 4, 5]), ...moov];
-  assert.deepEqual((await readTagLyrics(...reader(file), 'a.m4a')).map(item => item.text), [RUBY_TEXT]);
+  assert.deepEqual((await readEmbeddedLyrics(...reader(file))).map(item => item.text), [RUBY_TEXT]);
+});
+
+test('Ruby lyrics are read from an Ogg stream whose comment packet is spread over pages', async () => {
+  const comment = text => { const data = [...Buffer.from(text)]; return [...le(data.length, 4), ...data]; };
+  const packet = [...Buffer.from('OpusTags'), ...le(4, 4), ...Buffer.from('test'), ...le(1, 4), ...comment('RUBY_LYRICS=' + RUBY_TEXT + 'x'.repeat(600))];
+  const page = (sequence, segments, body) => [...Buffer.from('OggS'), 0, 0, ...new Array(8).fill(0), ...le(7, 4), ...le(sequence, 4), 0, 0, 0, 0, segments.length, ...segments, ...body];
+  const head = [...Buffer.from('OpusHead'), ...new Array(11).fill(0)];
+  // the comment packet: 255 + 255 bytes on one page, the rest on the next
+  const rest = packet.length - 510;
+  const file = [...page(0, [head.length], head), ...page(1, [255, 255], packet.slice(0, 510)), ...page(2, [rest], packet.slice(510)), ...page(3, [3], [1, 2, 3])];
+  assert.deepEqual((await readEmbeddedLyrics(...reader(file))).map(item => item.text), [RUBY_TEXT + 'x'.repeat(600)]);
+});
+
+test('Ruby lyrics are read from the ID3 chunk of a WAV file and the APE tag at the end of a file', async () => {
+  const id3 = [...tag([['USLT', uslt('TimeTag-Ruby', RUBY_TEXT)]])];
+  const chunk = (id, body) => [...Buffer.from(id), ...le(body.length, 4), ...body, ...(body.length & 1 ? [0] : [])];
+  const chunks = [...chunk('fmt ', new Array(16).fill(0)), ...chunk('data', [1, 2, 3]), ...chunk('id3 ', id3)];
+  const wav = [...Buffer.from('RIFF'), ...le(chunks.length + 4, 4), ...Buffer.from('WAVE'), ...chunks];
+  assert.deepEqual((await readEmbeddedLyrics(...reader(wav))).map(item => [item.descriptor, item.text]), [['TimeTag-Ruby', RUBY_TEXT]]);
+
+  const value = [...Buffer.from(RUBY_TEXT)];
+  const items = [...le(value.length, 4), 0, 0, 0, 0, ...Buffer.from('Ruby_Lyrics'), 0, ...value];
+  const footer = [...Buffer.from('APETAGEX'), ...le(2000, 4), ...le(items.length + 32, 4), ...le(1, 4), ...new Array(12).fill(0)];
+  const apeFile = [...Buffer.from('wvpk'), ...new Array(40).fill(9), ...items, ...footer];
+  assert.deepEqual((await readEmbeddedLyrics(...reader(apeFile))).map(item => item.text), [RUBY_TEXT]);
 });
 
 // just enough of the host for the mod to activate

@@ -3,7 +3,7 @@
 一个 [Folia](https://github.com/chthollyphile/folia-major) 模组，做三件事：
 
 - **双语配对**：歌词里同一时间点的原文和译文配成一对，一起显示；可以选主要显示原文还是译文。
-- **逐字注音**：读取 MP3、FLAC、M4A 里内嵌的 TimeTag/NicoKara Ruby 歌词（`[MM:SS:CC]` 逐字时间 + `@RubyN` 注音），在歌词上方显示注音，并随演唱逐字变色。日语汉字的振假名、韩语的罗马音、「運命」读作「さだめ」这类特殊读法都可以。
+- **逐字注音**：读取音乐文件里内嵌的 TimeTag/NicoKara Ruby 歌词（`[MM:SS:CC]` 逐字时间 + `@RubyN` 注音），在歌词上方显示注音，并随演唱逐字变色。日语汉字的振假名、韩语的罗马音、「運命」读作「さだめ」这类特殊读法都可以。
 - **整句罗马音**：按内嵌的注音把每一句拼成罗马音，交给 Folia 的罗马音字幕。因为用的是歌词里已经核对过的读法，不查词典，所以特殊读法也会拼对。
 
 ![预览](bilingual-ruby-lyrics/preview.png)
@@ -40,11 +40,17 @@ Folia 自带的显示模式不画注音。打开这个选项后，使用那些�
 
 模组只负责读取和显示。歌词需要事先写进音乐文件的标签：默认的歌词标签放普通双语 LRC（任何播放器都能读），另一个标签放带逐字时间和 `@Ruby` 的版本。
 
-| 格式 | 普通歌词 | 带注音的歌词 |
-| --- | --- | --- |
-| MP3 | 默认的 `USLT` 帧 | 描述为 `TimeTag-Ruby` 的 `USLT` 帧 |
-| FLAC | `LYRICS` | `RUBY_LYRICS` |
-| M4A | `©lyr` | `----:com.apple.iTunes:RUBY_LYRICS` |
+模组按文件里实际的标签种类来读，不看扩展名，所以 Folia 能播放的格式基本都支持：
+
+| 标签种类 | 格式 | 普通歌词 | 带注音的歌词 |
+| --- | --- | --- | --- |
+| ID3v2 | MP3、AAC、TTA，以及 WAV、AIFF 里的 ID3 块 | 默认的 `USLT` 帧 | 描述为 `TimeTag-Ruby` 的 `USLT` 帧 |
+| Vorbis 注释 | FLAC、OGG、Opus | `LYRICS` | `RUBY_LYRICS` |
+| MP4 | M4A、ALAC | `©lyr` | `----:com.apple.iTunes:RUBY_LYRICS` |
+| APEv2 | APE、WavPack | `Lyrics` | `RUBY_LYRICS` |
+| ASF | WMA | `WM/Lyrics` | `RUBY_LYRICS` |
+
+带注音的歌词直接放在普通歌词的那个标签里也能读到。CAF 没有通用的歌词标签，不支持。
 
 可以用 [lyric-timing-kit](https://github.com/Rizumu85/lyric-timing-kit) 自动生成并写入，也可以用任何能导出 NicoKara/TimeTag 格式的打轴软件。
 
@@ -60,7 +66,7 @@ Folia 自带的显示模式不画注音。打开这个选项后，使用那些�
 
 模组会做的事：
 
-- 读取正在播放的本地音乐文件的标签区（只读，最多 16 MB），取出其中的歌词：MP3 的 ID3 头部、FLAC 的注释块、M4A 的 `moov`。绝对路径由 `main.cjs` 读取；通过文件夹授权添加的歌曲用宿主已保存的目录句柄读取。
+- 读取正在播放的本地音乐文件的标签区（只读，每块最多 16 MB），取出其中的歌词；只读文件头和标签，不读音频数据。绝对路径由 `main.cjs` 读取；通过文件夹授权添加的歌曲用宿主已保存的目录句柄读取。
 - 只读访问宿主的 IndexedDB（`KineticPlayerDB` 的 `local_music` 和目录句柄记录），用来找到当前歌曲的文件。
 - 只读访问宿主的一项本地设置（`localStorage` 里的 `subtitle_content_mode`）：Folia 把“罗马音与翻译双行显示”报告给模组时会说成“翻译”，要靠这一项才能分辨。
 - 不联网，不启动进程，不写任何文件。

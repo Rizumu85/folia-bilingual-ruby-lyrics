@@ -1,4 +1,4 @@
-import { mountReading } from './renderer.mjs';
+import { mountReading, hostSubtitleCss } from './renderer.mjs';
 import { mountPoster } from './poster.mjs';
 import { mountPanel } from './panel.mjs';
 import { createIntegration } from './integration.mjs';
@@ -93,7 +93,21 @@ export default function activate(folium) {
     slot: 'player.stage.front',
     interactive: false,
     mount: (container, ctx) => {
-      if (!hasReadings(ctx.lines)) return () => {};
+      // While the caption is switched on, Folia's own subtitle rows take the caption's look, for
+      // every song, so that the two do not sit side by side in different styles. The stylesheet is
+      // made from the theme, and made again when the theme or the see-through state changes.
+      let sheet = null, css = '';
+      const restyle = () => {
+        const position = params.get().strip, on = position === 'top' || position === 'bottom';
+        const wanted = on ? hostSubtitleCss(ctx.getTheme()) : '';
+        if (wanted === css) return;
+        sheet?.unregister?.(); sheet = null; css = wanted;
+        if (wanted) sheet = folium.registries.styles?.register({ id: 'subtitles', css: wanted }) || null;
+      };
+      restyle();
+      const stops = [params.subscribe(restyle), ctx.subscribe?.(restyle)], timer = setInterval(restyle, 1000);
+      const stopRestyle = () => { clearInterval(timer); for (const stop of stops) stop?.(); sheet?.unregister?.(); sheet = null; css = ''; };
+      if (!hasReadings(ctx.lines)) return stopRestyle;
       let dispose = null, shown = null;
       const sync = () => {
         const position = params.get().strip;
@@ -104,7 +118,7 @@ export default function activate(folium) {
       };
       sync();
       const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe(sync);
-      return () => { unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
+      return () => { stopRestyle(); unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
     },
   });
   folium.registries.playerPanelTabs.register({

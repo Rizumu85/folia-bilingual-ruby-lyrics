@@ -227,11 +227,6 @@ const CSS = `
      filter, so that the readings above the text get the same edge. */
   .reading.strip .current { filter:drop-shadow(0 1px 3px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 14px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
   .reading.strip.clear .current { filter:drop-shadow(max(1px,.05em) max(1px,.05em) 0 color-mix(in srgb, var(--reading-bg,#000) 85%, transparent)); }
-  /* While Folia's own bottom subtitle layer is hidden, the caption carries the rows that layer
-     would show (romanization, translation), in the caption's style. */
-  .reading.strip .romaji, .reading.strip .secondary { font-size:.6em; font-weight:500; line-height:1.45; margin-top:.2em; letter-spacing:0; }
-  .reading.strip .romaji { color:var(--reading-secondary); }
-  .reading.strip .secondary.translation { font-weight:500; color:var(--reading-primary); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }
@@ -308,6 +303,26 @@ const hostLayerHidden = display => display.hideTranslationSubtitle === true || h
 // to blend into.
 const seeThrough = () => hostSetting('transparent_player_background') === 'true' || hostSetting('enable_player_page_native_blur') === 'true';
 
+// The caption's shadow, for text: soft, in the theme's background colour; hard and offset over a
+// see-through player page.
+const captionShadow = theme => seeThrough()
+  ? `max(1px,.05em) max(1px,.05em) 0 color-mix(in srgb, ${theme.backgroundColor} 85%, transparent)`
+  : `0 1px 3px color-mix(in srgb, ${theme.backgroundColor} 55%, transparent), 0 0 14px color-mix(in srgb, ${theme.backgroundColor} 35%, transparent)`;
+
+// A stylesheet that gives Folia's own subtitle rows (the romanization and the translation under
+// its display modes) the look of the caption they sit next to: opaque, the caption's shadow, and
+// no blurred plate behind them. Folia offers mods no styling hook for these rows, so the rules
+// go by the markers its subtitle layer happens to carry (data-subtitle-track and the layout
+// around it, the same from 0.7.12 to 0.7.17). If a later Folia changes them the rules simply stop
+// matching and its subtitles look as they always did.
+function hostSubtitleCss(theme) {
+  const shadow = captionShadow(theme);
+  return `
+    div:has(> div > div > [data-subtitle-track]) { opacity:1 !important; }
+    div:has(> div > [data-subtitle-track]) > div[aria-hidden="true"] { display:none !important; }
+    [data-subtitle-track] { opacity:1 !important; text-shadow:${shadow} !important; }`;
+}
+
 // How strongly a unit glows at `time`, 0 to 1, with the host's timing for its poster lyrics: the
 // glow eases up until a little after the unit has been sung (1.18 times its length), then eases
 // away until the line is over, or for about a second if that is later.
@@ -341,8 +356,6 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
   const paint = () => {
     const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
     const shown = hostRows(display);
-    // with Folia's own subtitle layer hidden, the caption shows those rows itself
-    const carried = !!strip && hostLayerHidden(display);
     root.style.setProperty('--reading-primary', theme.primaryColor);
     root.style.setProperty('--reading-secondary', theme.secondaryColor);
     root.style.setProperty('--reading-accent', theme.accentColor);
@@ -372,18 +385,18 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
       // both shown, none when subtitles are off or the bottom subtitle layer is hidden; a row is
       // the subtitle font at 1.5 line height.
       // The caption's own line box has empty room under the text, so it may dip 12px into the row.
-      const rows = carried ? 0 : Number(shown.translation) + Number(shown.romaji);
+      const rows = hostLayerHidden(display) ? 0 : Number(shown.translation) + Number(shown.romaji);
       const font = Math.min(20, Math.max(18, .026 * (root.ownerDocument.defaultView?.innerWidth || 1280))) * (display.subtitleFontScale || 1);
       root.style.bottom = Math.round((display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 - (rows ? 12 : 0)) + 'px';
     }
     const time = ctx.currentTime.get(), index = indexAt(time);
     // keyword colours are for the display mode and the poster; the caption has the theme's three colours only
     const keywords = !strip && keywordsOn() && theme.wordColors?.length ? theme.wordColors : null;
-    const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords, carried]);
+    const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
       const options = strip
-        ? { primary: 'original', bilingual: carried && shown.translation, ruby: true, romaji: carried && shown.romaji }
+        ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
         : { primary: settings.primary === 'translation' ? 'translation' : 'original', bilingual: shown.translation, ruby: settings.ruby !== false, romaji: shown.romaji };
       const coloursOf = line => {
         if (!keywords) return [];
@@ -465,7 +478,7 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
   const unsubscribeStore = folium.internals?.stores?.visualizerSettings?.subscribe?.(paint);
   return () => { unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); unsubscribeStore?.(); root.remove(); style.remove(); };
 }
-return { mountReading };
+return { hostSubtitleCss, mountReading };
 })();
 
 // ---- poster.mjs
@@ -1474,7 +1487,7 @@ return { createIntegration };
 
 // ---- client.mjs
 const __client = (() => {
-const { mountReading } = __renderer;
+const { mountReading, hostSubtitleCss } = __renderer;
 const { mountPoster } = __poster;
 const { mountPanel } = __panel;
 const { createIntegration } = __integration;
@@ -1569,7 +1582,21 @@ function activate(folium) {
     slot: 'player.stage.front',
     interactive: false,
     mount: (container, ctx) => {
-      if (!hasReadings(ctx.lines)) return () => {};
+      // While the caption is switched on, Folia's own subtitle rows take the caption's look, for
+      // every song, so that the two do not sit side by side in different styles. The stylesheet is
+      // made from the theme, and made again when the theme or the see-through state changes.
+      let sheet = null, css = '';
+      const restyle = () => {
+        const position = params.get().strip, on = position === 'top' || position === 'bottom';
+        const wanted = on ? hostSubtitleCss(ctx.getTheme()) : '';
+        if (wanted === css) return;
+        sheet?.unregister?.(); sheet = null; css = wanted;
+        if (wanted) sheet = folium.registries.styles?.register({ id: 'subtitles', css: wanted }) || null;
+      };
+      restyle();
+      const stops = [params.subscribe(restyle), ctx.subscribe?.(restyle)], timer = setInterval(restyle, 1000);
+      const stopRestyle = () => { clearInterval(timer); for (const stop of stops) stop?.(); sheet?.unregister?.(); sheet = null; css = ''; };
+      if (!hasReadings(ctx.lines)) return stopRestyle;
       let dispose = null, shown = null;
       const sync = () => {
         const position = params.get().strip;
@@ -1580,7 +1607,7 @@ function activate(folium) {
       };
       sync();
       const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe(sync);
-      return () => { unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
+      return () => { stopRestyle(); unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
     },
   });
   folium.registries.playerPanelTabs.register({

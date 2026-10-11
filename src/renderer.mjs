@@ -52,10 +52,12 @@ const CSS = `
   .reading.strip .current .timed.sung { color:var(--word); }
   .reading.strip .current .timed.now { color:var(--reading-accent); }
   /* Its edge is the host's subtitle edge: a thin shadow in the theme's background colour, and a
-     wider one only while the host's "subtitle background" setting is on and the player page has
-     its own background (see seeThrough). */
+     wider one while the host's "subtitle background" setting is on. Over a see-through player
+     page (see seeThrough) what is behind the text is unknown and a wide shadow reads as a smudge,
+     so the text gets a tight outline instead: it stays readable and stays clean. */
   .reading.strip .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 24%, transparent)); }
   .reading.strip.backed .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 10px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
+  .reading.strip.clear .current { filter:drop-shadow(0 0 1px color-mix(in srgb, var(--reading-bg,#000) 90%, transparent)) drop-shadow(0 0 1px color-mix(in srgb, var(--reading-bg,#000) 70%, transparent)) drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 30%, transparent)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }
@@ -166,7 +168,9 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     root.style.setProperty('--reading-accent', theme.accentColor);
     if (strip) {
       root.style.setProperty('--reading-bg', theme.backgroundColor);
-      root.classList.toggle('backed', display.subtitleOverlayBackground !== false && !seeThrough());
+      const clear = seeThrough();
+      root.classList.toggle('clear', clear);
+      root.classList.toggle('backed', !clear && display.subtitleOverlayBackground !== false);
     }
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
     if (!strip) root.style.setProperty('--weight', String(folium.theme.resolveFontWeight?.(theme, 600) ?? 600));

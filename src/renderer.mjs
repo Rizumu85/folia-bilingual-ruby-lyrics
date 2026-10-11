@@ -58,6 +58,11 @@ const CSS = `
      filter, so that the readings above the text get the same edge. */
   .reading.strip .current { filter:drop-shadow(0 1px 3px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 14px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
   .reading.strip.clear .current { filter:drop-shadow(max(1px,.05em) max(1px,.05em) 0 color-mix(in srgb, var(--reading-bg,#000) 85%, transparent)); }
+  /* While Folia's own bottom subtitle layer is hidden, the caption carries the rows that layer
+     would show (romanization, translation), in the caption's style. */
+  .reading.strip .romaji, .reading.strip .secondary { font-size:.6em; font-weight:500; line-height:1.45; margin-top:.2em; letter-spacing:0; }
+  .reading.strip .romaji { color:var(--reading-secondary); }
+  .reading.strip .secondary.translation { font-weight:500; color:var(--reading-primary); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }
@@ -125,6 +130,10 @@ const hostRows = display => {
   return { translation: true, romaji: hostSetting('subtitle_content_mode') === 'both' };
 };
 
+// The user has hidden Folia's bottom subtitle layer on the player page. A stage layer is not told
+// (the host computes it outside its stores), so the stored setting is read.
+const hostLayerHidden = display => display.hideTranslationSubtitle === true || hostSetting('hide_player_translation_subtitle') === 'true';
+
 // The player page shows what is behind the window (transparent background, or the system's blur)
 // instead of the theme's background. A shadow in the theme's background colour then has nothing
 // to blend into.
@@ -163,6 +172,8 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
   const paint = () => {
     const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
     const shown = hostRows(display);
+    // with Folia's own subtitle layer hidden, the caption shows those rows itself
+    const carried = !!strip && hostLayerHidden(display);
     root.style.setProperty('--reading-primary', theme.primaryColor);
     root.style.setProperty('--reading-secondary', theme.secondaryColor);
     root.style.setProperty('--reading-accent', theme.accentColor);
@@ -192,18 +203,18 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
       // both shown, none when subtitles are off or the bottom subtitle layer is hidden; a row is
       // the subtitle font at 1.5 line height.
       // The caption's own line box has empty room under the text, so it may dip 12px into the row.
-      const rows = display.hideTranslationSubtitle ? 0 : Number(shown.translation) + Number(shown.romaji);
+      const rows = carried ? 0 : Number(shown.translation) + Number(shown.romaji);
       const font = Math.min(20, Math.max(18, .026 * (root.ownerDocument.defaultView?.innerWidth || 1280))) * (display.subtitleFontScale || 1);
       root.style.bottom = Math.round((display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 - (rows ? 12 : 0)) + 'px';
     }
     const time = ctx.currentTime.get(), index = indexAt(time);
     // keyword colours are for the display mode and the poster; the caption has the theme's three colours only
     const keywords = !strip && keywordsOn() && theme.wordColors?.length ? theme.wordColors : null;
-    const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords]);
+    const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords, carried]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
       const options = strip
-        ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
+        ? { primary: 'original', bilingual: carried && shown.translation, ruby: true, romaji: carried && shown.romaji }
         : { primary: settings.primary === 'translation' ? 'translation' : 'original', bilingual: shown.translation, ruby: settings.ruby !== false, romaji: shown.romaji };
       const coloursOf = line => {
         if (!keywords) return [];

@@ -212,8 +212,11 @@ const CSS = `
 
   .reading.strip { --size:calc(clamp(18px,2.3vw,34px) * var(--scale,1)); --weight:500; --base:color-mix(in srgb, var(--reading-primary) 52%, transparent); height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
   /* the caption is there to be read ahead of the singing, over any picture: its unsung text is less faint than the host's 34% */
-  /* a dark edge keeps the caption readable over whatever the display mode draws; as a filter, because a text shadow would be painted over the swept fill */
-  .reading.strip .current { filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) drop-shadow(0 0 10px rgba(0,0,0,.35)); }
+  /* The caption's edge is the host's subtitle edge: a thin shadow in the theme's background colour,
+     and a wider one only while the host's "subtitle background" setting is on. As a filter, because
+     a text shadow would be painted over the swept fill. */
+  .reading.strip .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 24%, transparent)); }
+  .reading.strip.backed .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 10px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }
@@ -312,6 +315,10 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     root.style.setProperty('--reading-primary', theme.primaryColor);
     root.style.setProperty('--reading-secondary', theme.secondaryColor);
     root.style.setProperty('--reading-accent', theme.accentColor);
+    if (strip) {
+      root.style.setProperty('--reading-bg', theme.backgroundColor);
+      root.classList.toggle('backed', display.subtitleOverlayBackground !== false);
+    }
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
     if (!strip) root.style.setProperty('--weight', String(folium.theme.resolveFontWeight?.(theme, 600) ?? 600));
     // Translations and the romanization row follow the host's subtitles: their theme (0.7.17 on;
@@ -327,7 +334,8 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     root.style.setProperty('--scale', String(poster ? 1 : (strip ? display.subtitleFontScale : display.lyricsFontScale) || 1));
     root.style.setProperty('--sub-scale', String(poster || strip ? 1 : display.subtitleFontScale || 1));
     // The wall remains visible outside the player; showText belongs to the player stage.
-    root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);
+    // the caption sits with the host's subtitles and takes their opacity
+    root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? display.subtitleOverlayOpacity ?? 1 : display.visualizerOpacity ?? 1);
     if (strip === 'bottom') {
       // Sit right above Folia's own subtitles. They start 112px up (32px while the player
       // controls are hidden) and are one row tall, two when romanization and translation are

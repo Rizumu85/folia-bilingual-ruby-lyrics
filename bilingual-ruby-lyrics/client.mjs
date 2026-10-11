@@ -169,13 +169,15 @@ return { shiftLines, pairBilingual };
 const __renderer = (() => {
 const { pairBilingual } = __lyrics;
 
-// One look for the three places these lyrics are drawn (the display mode, the poster card, the
-// caption), taken from Folia's own poster lyrics so that lyrics with readings sit beside the
-// host's without a seam: each sung unit is filled by a soft sweep, a glow rises and fades behind
-// it, the lines before and after are smaller, dimmed and slightly blurred, a chorus line takes the
-// accent colour, and keywords take the colours the theme gives them. The numbers are the host's
-// (sweep softness, glow radii and envelope, alpha, scale and blur per line), read from its 0.7.17
-// source; the drawing itself is plain CSS, not the host's GPU renderer.
+// The display mode and the poster card take their look from Folia's own poster lyrics, so that
+// lyrics with readings sit beside the host's without a seam: each sung unit is filled by a soft
+// sweep, a glow rises and fades behind it, the lines before and after are smaller, dimmed and
+// slightly blurred, a chorus line takes the accent colour, and keywords take the colours the theme
+// gives them. The numbers are the host's (sweep softness, glow radii and envelope, alpha, scale
+// and blur per line), read from its 0.7.17 source; the drawing itself is plain CSS, not the host's
+// GPU renderer.
+// The caption is drawn over the host's other display modes, and over those of other mods. They
+// have nothing in common but the theme's colours, so the caption uses only those, without effects.
 const CSS = `
   :host { container-type:inline-size; }
   .reading { --size:calc(clamp(25px,4.4vw,62px) * var(--scale,1)); --base:color-mix(in srgb, var(--reading-primary) 34%, transparent); --word:color-mix(in srgb, var(--reading-primary) 98%, transparent);
@@ -210,11 +212,16 @@ const CSS = `
   .reading.poster .near { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
   .reading.poster .near > div { display:inline; }
 
-  .reading.strip { --size:calc(clamp(18px,2.3vw,34px) * var(--scale,1)); --weight:500; --base:color-mix(in srgb, var(--reading-primary) 52%, transparent); height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
-  /* the caption is there to be read ahead of the singing, over any picture: its unsung text is less faint than the host's 34% */
-  /* The caption's edge is the host's subtitle edge: a thin shadow in the theme's background colour,
-     and a wider one only while the host's "subtitle background" setting is on. As a filter, because
-     a text shadow would be painted over the swept fill. */
+  .reading.strip { --size:calc(clamp(18px,2.3vw,34px) * var(--scale,1)); --weight:500; height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
+  /* The caption: no sweep and no glow. Words to come are in the theme's secondary colour, sung
+     words in its lyric colour (a keyword in its own), the unit being sung in the accent colour. */
+  .reading.strip .current { color:var(--reading-primary); }
+  .reading.strip .current.chorus { --word:color-mix(in srgb, var(--reading-primary) 98%, transparent); }
+  .reading.strip .current .timed { background-image:none; -webkit-text-fill-color:currentColor; color:var(--reading-secondary); }
+  .reading.strip .current .timed.sung { color:var(--word); }
+  .reading.strip .current .timed.now { color:var(--reading-accent); }
+  /* Its edge is the host's subtitle edge: a thin shadow in the theme's background colour, and a
+     wider one only while the host's "subtitle background" setting is on. */
   .reading.strip .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 24%, transparent)); }
   .reading.strip.backed .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 10px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
@@ -400,6 +407,13 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     }
     for (const unit of timed) {
       const sung = time >= unit.end, now = time >= unit.start && time < unit.end;
+      const state = sung ? 'sung' : now ? 'now' : '';
+      if (unit.state !== state) {
+        unit.state = state;
+        unit.element.classList.toggle('sung', sung);
+        unit.element.classList.toggle('now', now);
+      }
+      if (strip) continue; // the caption has no sweep and no glow
       // the sweep: how much of this unit is filled, as a share of its width
       const filled = sung ? 1 : now ? (time - unit.start) / Math.max(.001, unit.end - unit.start) : 0;
       if (unit.filled !== filled) {

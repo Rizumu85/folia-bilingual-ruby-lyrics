@@ -52,7 +52,8 @@ const CSS = `
   .reading.strip .current .timed.sung { color:var(--word); }
   .reading.strip .current .timed.now { color:var(--reading-accent); }
   /* Its edge is the host's subtitle edge: a thin shadow in the theme's background colour, and a
-     wider one only while the host's "subtitle background" setting is on. */
+     wider one only while the host's "subtitle background" setting is on and the player page has
+     its own background (see seeThrough). */
   .reading.strip .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 24%, transparent)); }
   .reading.strip.backed .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 10px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
@@ -98,24 +99,34 @@ function appendOriginal(container, line, showRuby, timed, colours = []) {
   }
 }
 
+// A few host settings are not handed to mods. They are read where Folia stores them, each at most
+// once a second.
+const stored = new Map();
+const hostSetting = key => {
+  const now = Date.now(), known = stored.get(key);
+  if (known && now - known.at < 1000) return known.value;
+  let value = null;
+  try { value = globalThis.localStorage?.getItem(key) ?? null; } catch { /* no storage here */ }
+  stored.set(key, { at: now, value });
+  return value;
+};
+
 // Which rows go with the lyrics is the host's to say, with its subtitle setting: the translation,
 // the romanization, both, or neither. This mod has no switch of its own for them.
-// Folia reports its two-row setting (romanization above translation) to mods as 'translation'.
-// The stored setting says which it is; it is read at most once a second.
-let twoRows = { at: -Infinity, value: false };
+// Folia reports its two-row setting (romanization above translation) to mods as 'translation';
+// the stored setting says which it is.
 const hostRows = display => {
   if (display.showSubtitleTranslation === false) return { translation: false, romaji: false };
   const mode = display.subtitleContentMode ?? 'translation';
   if (mode === 'romanization') return { translation: false, romaji: true };
   if (mode !== 'translation') return { translation: false, romaji: false };
-  const now = Date.now();
-  if (now - twoRows.at > 1000) {
-    let value = false;
-    try { value = globalThis.localStorage?.getItem('subtitle_content_mode') === 'both'; } catch { /* no storage here */ }
-    twoRows = { at: now, value };
-  }
-  return { translation: true, romaji: twoRows.value };
+  return { translation: true, romaji: hostSetting('subtitle_content_mode') === 'both' };
 };
+
+// The player page shows what is behind the window (transparent background, or the system's blur)
+// instead of the theme's background. A shadow in the theme's background colour then has nothing
+// to blend into.
+const seeThrough = () => hostSetting('transparent_player_background') === 'true' || hostSetting('enable_player_page_native_blur') === 'true';
 
 // How strongly a unit glows at `time`, 0 to 1, with the host's timing for its poster lyrics: the
 // glow eases up until a little after the unit has been sung (1.18 times its length), then eases
@@ -155,7 +166,7 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     root.style.setProperty('--reading-accent', theme.accentColor);
     if (strip) {
       root.style.setProperty('--reading-bg', theme.backgroundColor);
-      root.classList.toggle('backed', display.subtitleOverlayBackground !== false);
+      root.classList.toggle('backed', display.subtitleOverlayBackground !== false && !seeThrough());
     }
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
     if (!strip) root.style.setProperty('--weight', String(folium.theme.resolveFontWeight?.(theme, 600) ?? 600));

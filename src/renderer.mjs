@@ -54,11 +54,11 @@ const CSS = `
   /* A soft shadow in the theme's background colour keeps it readable over whatever the display
      mode draws. Over a see-through player page (see seeThrough) what is behind the text is not
      the theme's background and a wide shadow reads as a smudge, so the text gets a hard shadow
-     instead: the glyphs again in that colour, set down and to the right with no blur, twice, so
-     that the shadow is one solid slab (.06em across, .09em down). As a filter, so that the
-     readings above the text get the same edge. */
+     instead: the glyphs again in that colour, set down and to the right with no blur, in three
+     steps, so that the shadow is one solid slab: 3px each way at the caption's full size
+     (.088em). As a filter, so that the readings above the text get the same edge. */
   .reading.strip .current { filter:drop-shadow(0 1px 3px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 14px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
-  .reading.strip.clear .current { filter:drop-shadow(max(.5px,.03em) max(.75px,.045em) 0 color-mix(in srgb, var(--reading-bg,#000) 90%, transparent)) drop-shadow(max(.5px,.03em) max(.75px,.045em) 0 color-mix(in srgb, var(--reading-bg,#000) 90%, transparent)); }
+  .reading.strip.clear .current { filter:drop-shadow(max(.5px,.0295em) max(.5px,.0295em) 0 var(--reading-bg,#000)) drop-shadow(max(.5px,.0295em) max(.5px,.0295em) 0 var(--reading-bg,#000)) drop-shadow(max(.5px,.0295em) max(.5px,.0295em) 0 var(--reading-bg,#000)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }
@@ -152,7 +152,7 @@ const seeThrough = () => hostSetting('transparent_player_background') === 'true'
 // The caption's shadow, for text: soft, in the theme's background colour; hard and offset over a
 // see-through player page.
 const captionShadow = theme => seeThrough()
-  ? [1, 2].map(step => `max(${step * .5}px,${step * .03}em) max(${step * .75}px,${step * .045}em) 0 color-mix(in srgb, ${theme.backgroundColor} 90%, transparent)`).join(', ')
+  ? [1, 2, 3].map(step => `max(${step * .5}px,${step * .0295}em) max(${step * .5}px,${step * .0295}em) 0 ${theme.backgroundColor}`).join(', ')
   : `0 1px 3px color-mix(in srgb, ${theme.backgroundColor} 55%, transparent), 0 0 14px color-mix(in srgb, ${theme.backgroundColor} 35%, transparent)`;
 
 // A stylesheet that gives Folia's own subtitle rows (the romanization and the translation under

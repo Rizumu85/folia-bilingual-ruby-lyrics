@@ -53,10 +53,11 @@ const CSS = `
   .reading.strip .current .timed.now { color:var(--reading-accent); }
   /* A soft shadow in the theme's background colour keeps it readable over whatever the display
      mode draws. Over a see-through player page (see seeThrough) what is behind the text is not
-     the theme's background and a wide shadow reads as a smudge, so the text gets a tight outline
-     instead. As a filter, so that the readings above the text get the same edge. */
+     the theme's background and a wide shadow reads as a smudge, so the text gets a hard shadow
+     instead: a copy of the glyphs in that colour, set down and to the right, with no blur. As a
+     filter, so that the readings above the text get the same edge. */
   .reading.strip .current { filter:drop-shadow(0 1px 3px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 14px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
-  .reading.strip.clear .current { filter:drop-shadow(0 0 1px color-mix(in srgb, var(--reading-bg,#000) 90%, transparent)) drop-shadow(0 0 1px color-mix(in srgb, var(--reading-bg,#000) 70%, transparent)) drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 30%, transparent)); }
+  .reading.strip.clear .current { filter:drop-shadow(max(1px,.05em) max(1px,.05em) 0 color-mix(in srgb, var(--reading-bg,#000) 85%, transparent)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }

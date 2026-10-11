@@ -43,20 +43,19 @@ const CSS = `
   .reading.poster .near { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
   .reading.poster .near > div { display:inline; }
 
-  .reading.strip { --size:calc(clamp(18px,2.3vw,34px) * var(--scale,1)); --weight:500; height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
-  /* The caption: no sweep and no glow. Words to come are in the theme's secondary colour, sung
-     words in its lyric colour (a keyword in its own), the unit being sung in the accent colour. */
+  /* The caption does not follow the host's subtitle settings: it is always opaque, one size, and
+     uses nothing but the theme's colours. Words to come are in the secondary colour, sung words in
+     the lyric colour, the unit being sung in the accent colour; no sweep, no glow. */
+  .reading.strip { --size:clamp(18px,2.3vw,34px); --weight:500; height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
   .reading.strip .current { color:var(--reading-primary); }
-  .reading.strip .current.chorus { --word:color-mix(in srgb, var(--reading-primary) 98%, transparent); }
   .reading.strip .current .timed { background-image:none; -webkit-text-fill-color:currentColor; color:var(--reading-secondary); }
-  .reading.strip .current .timed.sung { color:var(--word); }
+  .reading.strip .current .timed.sung { color:var(--reading-primary); }
   .reading.strip .current .timed.now { color:var(--reading-accent); }
-  /* Its edge is the host's subtitle edge: a thin shadow in the theme's background colour, and a
-     wider one while the host's "subtitle background" setting is on. Over a see-through player
-     page (see seeThrough) what is behind the text is unknown and a wide shadow reads as a smudge,
-     so the text gets a tight outline instead: it stays readable and stays clean. */
-  .reading.strip .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 24%, transparent)); }
-  .reading.strip.backed .current { filter:drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 10px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
+  /* A soft shadow in the theme's background colour keeps it readable over whatever the display
+     mode draws. Over a see-through player page (see seeThrough) what is behind the text is not
+     the theme's background and a wide shadow reads as a smudge, so the text gets a tight outline
+     instead. As a filter, so that the readings above the text get the same edge. */
+  .reading.strip .current { filter:drop-shadow(0 1px 3px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 14px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
   .reading.strip.clear .current { filter:drop-shadow(0 0 1px color-mix(in srgb, var(--reading-bg,#000) 90%, transparent)) drop-shadow(0 0 1px color-mix(in srgb, var(--reading-bg,#000) 70%, transparent)) drop-shadow(0 1px 2px color-mix(in srgb, var(--reading-bg,#000) 30%, transparent)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
@@ -168,9 +167,7 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     root.style.setProperty('--reading-accent', theme.accentColor);
     if (strip) {
       root.style.setProperty('--reading-bg', theme.backgroundColor);
-      const clear = seeThrough();
-      root.classList.toggle('clear', clear);
-      root.classList.toggle('backed', !clear && display.subtitleOverlayBackground !== false);
+      root.classList.toggle('clear', seeThrough());
     }
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
     if (!strip) root.style.setProperty('--weight', String(folium.theme.resolveFontWeight?.(theme, 600) ?? 600));
@@ -182,13 +179,12 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     root.style.setProperty('--sub-font', folium.theme.resolveTranslationFontStack?.(subtitle) ?? folium.theme.resolveFontStack(subtitle));
     root.style.setProperty('--sub-weight', String(folium.theme.resolveFontWeight?.(subtitle, 500) ?? 500));
     // Sizes follow the host's multipliers: the lyric size for the display mode, the subtitle size
-    // for its translation and for the caption, which sits with the subtitles. The host fits its
-    // poster lyrics to the card and has no multiplier there, so the poster has none either.
-    root.style.setProperty('--scale', String(poster ? 1 : (strip ? display.subtitleFontScale : display.lyricsFontScale) || 1));
+    // for its translation. The host fits its poster lyrics to the card and has no multiplier
+    // there, so the poster has none either; the caption keeps its own size.
+    root.style.setProperty('--scale', String(poster || strip ? 1 : display.lyricsFontScale || 1));
     root.style.setProperty('--sub-scale', String(poster || strip ? 1 : display.subtitleFontScale || 1));
     // The wall remains visible outside the player; showText belongs to the player stage.
-    // the caption sits with the host's subtitles and takes their opacity
-    root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? display.subtitleOverlayOpacity ?? 1 : display.visualizerOpacity ?? 1);
+    root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);
     if (strip === 'bottom') {
       // Sit right above Folia's own subtitles. They start 112px up (32px while the player
       // controls are hidden) and are one row tall, two when romanization and translation are
@@ -200,7 +196,8 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
       root.style.bottom = Math.round((display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 - (rows ? 12 : 0)) + 'px';
     }
     const time = ctx.currentTime.get(), index = indexAt(time);
-    const keywords = keywordsOn() && theme.wordColors?.length ? theme.wordColors : null;
+    // keyword colours are for the display mode and the poster; the caption has the theme's three colours only
+    const keywords = !strip && keywordsOn() && theme.wordColors?.length ? theme.wordColors : null;
     const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();

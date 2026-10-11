@@ -9,7 +9,7 @@ import { pairBilingual } from './lyrics.mjs';
 // source; the drawing itself is plain CSS, not the host's GPU renderer.
 const CSS = `
   :host { container-type:inline-size; }
-  .reading { --size:clamp(25px,4.4vw,62px); --base:color-mix(in srgb, var(--reading-primary) 34%, transparent); --word:color-mix(in srgb, var(--reading-primary) 98%, transparent);
+  .reading { --size:calc(clamp(25px,4.4vw,62px) * var(--scale,1)); --base:color-mix(in srgb, var(--reading-primary) 34%, transparent); --word:color-mix(in srgb, var(--reading-primary) 98%, transparent);
     height:100%; width:100%; display:flex; flex-direction:column; justify-content:center; gap:max(18px, calc(var(--size) * .49)); padding:clamp(28px,7vw,100px); box-sizing:border-box; overflow:hidden;
     color:var(--reading-primary); text-align:center; font-weight:var(--weight,600); }
   .reading button { appearance:none; background:transparent; border:0; color:inherit; font:inherit; padding:0; cursor:pointer; width:100%; }
@@ -25,8 +25,11 @@ const CSS = `
   .reading .near.passed { color:var(--word); opacity:.52; filter:blur(1.1px); }
   .reading .near.passed .timed { color:var(--word); }
   .reading .near.waiting { color:color-mix(in srgb, var(--reading-primary) 46%, transparent); opacity:.72; filter:blur(.7px); }
-  .reading .secondary { font-size:.5em; font-weight:500; margin-top:.3em; line-height:1.4; color:color-mix(in srgb, var(--reading-primary) 68%, transparent); }
-  .reading .romaji { font-size:.42em; font-weight:400; line-height:1.6; letter-spacing:.02em; color:color-mix(in srgb, var(--reading-primary) 68%, transparent); }
+  .reading .secondary { font-size:calc(.5em * var(--sub-scale,1)); font-weight:500; margin-top:.3em; line-height:1.4; color:color-mix(in srgb, var(--reading-primary) 68%, transparent); }
+  /* a translation, wherever it is drawn, is set in the font the host's subtitles use; as the small row it also takes their weight and colour */
+  .reading .translation { font-family:var(--sub-font,inherit); }
+  .reading .secondary.translation { font-weight:var(--sub-weight,500); color:color-mix(in srgb, var(--reading-sub,var(--reading-primary)) 68%, transparent); }
+  .reading .romaji { font-family:var(--sub-font,inherit); font-size:calc(.42em * var(--sub-scale,1)); font-weight:400; line-height:1.6; letter-spacing:.02em; color:color-mix(in srgb, var(--reading-sub,var(--reading-primary)) 68%, transparent); }
   .reading ruby { ruby-position:over; ruby-align:center; }
   .reading rt { font-size:.38em; font-weight:400; line-height:1.15; letter-spacing:.03em; }
   .reading .empty { font-size:20px; font-weight:400; color:var(--reading-secondary); }
@@ -38,7 +41,7 @@ const CSS = `
   .reading.poster .near { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
   .reading.poster .near > div { display:inline; }
 
-  .reading.strip { --size:clamp(18px,2.3vw,34px); --weight:500; --base:color-mix(in srgb, var(--reading-primary) 52%, transparent); height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
+  .reading.strip { --size:calc(clamp(18px,2.3vw,34px) * var(--scale,1)); --weight:500; --base:color-mix(in srgb, var(--reading-primary) 52%, transparent); height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
   /* the caption is there to be read ahead of the singing, over any picture: its unsung text is less faint than the host's 34% */
   /* a dark edge keeps the caption readable over whatever the display mode draws; as a filter, because a text shadow would be painted over the swept fill */
   .reading.strip .current { filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) drop-shadow(0 0 10px rgba(0,0,0,.35)); }
@@ -137,6 +140,18 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     root.style.setProperty('--reading-accent', theme.accentColor);
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
     if (!strip) root.style.setProperty('--weight', String(folium.theme.resolveFontWeight?.(theme, 600) ?? 600));
+    // Translations and the romanization row follow the host's subtitles: their theme (0.7.17 on;
+    // before that the lyric theme), their font and weight.
+    let subtitle = theme;
+    try { subtitle = ctx.getSubtitleTheme?.() ?? theme; } catch { /* keep the lyric theme */ }
+    root.style.setProperty('--reading-sub', subtitle.primaryColor);
+    root.style.setProperty('--sub-font', folium.theme.resolveTranslationFontStack?.(subtitle) ?? folium.theme.resolveFontStack(subtitle));
+    root.style.setProperty('--sub-weight', String(folium.theme.resolveFontWeight?.(subtitle, 500) ?? 500));
+    // Sizes follow the host's multipliers: the lyric size for the display mode, the subtitle size
+    // for its translation and for the caption, which sits with the subtitles. The host fits its
+    // poster lyrics to the card and has no multiplier there, so the poster has none either.
+    root.style.setProperty('--scale', String(poster ? 1 : (strip ? display.subtitleFontScale : display.lyricsFontScale) || 1));
+    root.style.setProperty('--sub-scale', String(poster || strip ? 1 : display.subtitleFontScale || 1));
     // The wall remains visible outside the player; showText belongs to the player stage.
     root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);
     if (strip === 'bottom') {
@@ -180,7 +195,7 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
         }
         const main = document.createElement('div');
         const translated = options.primary === 'translation' && !!line.translation;
-        if (translated) { main.textContent = line.translation; main.className = 'plain'; }
+        if (translated) { main.textContent = line.translation; main.className = 'plain translation'; }
         else appendOriginal(main, line, options.ruby && current, current ? timed : [], coloursOf(line));
         row.append(main);
         // the romanization goes with the original, wherever that is drawn
@@ -190,7 +205,7 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
         if (current && options.bilingual && line.translation) {
           const secondary = document.createElement('div'); secondary.className = 'secondary';
           if (translated) appendOriginal(secondary, line, options.ruby, timed, coloursOf(line));
-          else secondary.textContent = line.translation;
+          else { secondary.textContent = line.translation; secondary.classList.add('translation'); }
           row.append(secondary);
           if (romaji && translated) row.append(romaji);
         }

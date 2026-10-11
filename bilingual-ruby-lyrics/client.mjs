@@ -169,52 +169,55 @@ return { shiftLines, pairBilingual };
 const __renderer = (() => {
 const { pairBilingual } = __lyrics;
 
+// One look for the three places these lyrics are drawn (the display mode, the poster card, the
+// caption), taken from Folia's own poster lyrics so that lyrics with readings sit beside the
+// host's without a seam: each sung unit is filled by a soft sweep, a glow rises and fades behind
+// it, the lines before and after are smaller, dimmed and slightly blurred, a chorus line takes the
+// accent colour, and keywords take the colours the theme gives them. The numbers are the host's
+// (sweep softness, glow radii and envelope, alpha, scale and blur per line), read from its 0.7.17
+// source; the drawing itself is plain CSS, not the host's GPU renderer.
 const CSS = `
-  .reading { height:100%; width:100%; display:flex; flex-direction:column; justify-content:center; gap:clamp(22px,5vh,54px); padding:clamp(28px,7vw,100px); box-sizing:border-box; overflow:hidden; color:var(--reading-primary); text-align:center; }
+  :host { container-type:inline-size; }
+  .reading { --size:clamp(25px,4.4vw,62px); --base:color-mix(in srgb, var(--reading-primary) 34%, transparent); --word:color-mix(in srgb, var(--reading-primary) 98%, transparent);
+    height:100%; width:100%; display:flex; flex-direction:column; justify-content:center; gap:max(18px, calc(var(--size) * .49)); padding:clamp(28px,7vw,100px); box-sizing:border-box; overflow:hidden;
+    color:var(--reading-primary); text-align:center; font-weight:var(--weight,600); }
   .reading button { appearance:none; background:transparent; border:0; color:inherit; font:inherit; padding:0; cursor:pointer; width:100%; }
   .reading button:focus-visible { outline:2px solid var(--reading-accent); outline-offset:10px; border-radius:6px; }
-  .reading .line { line-height:1.9; overflow-wrap:anywhere; white-space:pre-wrap; }
-  .reading .near { color:var(--reading-secondary); font-size:clamp(17px,2.2vw,29px); opacity:.55; }
-  .reading .current { font-size:clamp(25px,4.4vw,62px); font-weight:600; }
-  .reading .secondary { font-size:.52em; font-weight:400; color:var(--reading-secondary); margin-top:8px; line-height:2; }
-  .reading .romaji { font-size:.42em; font-weight:400; color:var(--reading-secondary); line-height:1.6; letter-spacing:.02em; }
+  .reading .line { overflow-wrap:anywhere; white-space:pre-wrap; font-weight:inherit; }
+  .reading .current { font-size:var(--size); line-height:1.75; color:var(--base); --soft:clamp(6px,.45em,16px); --near:.2em; --far:.46em; }
+  .reading .current.chorus { --word:color-mix(in srgb, var(--reading-primary) 52%, var(--reading-accent)); --near:.32em; --far:.64em; }
+  .reading .current .plain { color:var(--word); }
+  .reading .current .timed { color:transparent; -webkit-text-fill-color:transparent; -webkit-background-clip:text; background-clip:text;
+    background-image:linear-gradient(90deg, var(--word) calc(var(--p,0%) + (var(--pn,0) - 1) * var(--soft)), var(--base) calc(var(--p,0%) + var(--pn,0) * var(--soft))); }
+  .reading .current .timed.glow { filter:drop-shadow(0 0 var(--near) color-mix(in srgb, var(--word) var(--g1,0%), transparent)) drop-shadow(0 0 var(--far) color-mix(in srgb, var(--word) var(--g2,0%), transparent)); }
+  .reading .near { font-size:calc(var(--size) * .72); line-height:1.3; }
+  .reading .near.passed { color:var(--word); opacity:.52; filter:blur(1.1px); }
+  .reading .near.passed .timed { color:var(--word); }
+  .reading .near.waiting { color:color-mix(in srgb, var(--reading-primary) 46%, transparent); opacity:.72; filter:blur(.7px); }
+  .reading .secondary { font-size:.5em; font-weight:500; margin-top:.3em; line-height:1.4; color:color-mix(in srgb, var(--reading-primary) 68%, transparent); }
+  .reading .romaji { font-size:.42em; font-weight:400; line-height:1.6; letter-spacing:.02em; color:color-mix(in srgb, var(--reading-primary) 68%, transparent); }
   .reading ruby { ruby-position:over; ruby-align:center; }
   .reading rt { font-size:.38em; font-weight:400; line-height:1.15; letter-spacing:.03em; }
-  .reading .timed { color:var(--reading-secondary); }
-  .reading .timed.sung { color:var(--reading-primary); }
-  .reading .timed.now { color:var(--reading-accent); }
-  .reading .empty { font-size:20px; color:var(--reading-secondary); }
-  :host { container-type:inline-size; }
-  /* The poster card takes the look of Folia's own poster lyrics, so that the card with readings
-     matches the one without: each sung unit is filled by a soft sweep, a glow rises and fades
-     behind it, the lines before and after are smaller, dimmed and slightly blurred, and the
-     edges of the block fade out. The numbers are the host's (sweep softness, glow radii and
-     envelope, alpha, scale and blur per line), read from its 0.7.17 source. */
-  .reading.poster { --size:clamp(24px,7cqw,56px); --base:color-mix(in srgb, var(--reading-primary) 34%, transparent); --word:color-mix(in srgb, var(--reading-primary) 98%, transparent);
-    padding:8px 12px; gap:max(18px, calc(var(--size) * .49)); text-align:left; font-weight:var(--weight,600);
+  .reading .empty { font-size:20px; font-weight:400; color:var(--reading-secondary); }
+  @media (prefers-reduced-motion: reduce) { .reading .near, .reading .current .timed.glow { filter:none; } }
+
+  .reading.poster { --size:clamp(24px,7cqw,56px); padding:8px 12px; text-align:left;
     -webkit-mask-image:linear-gradient(to bottom, transparent, #000 9%, #000 91%, transparent), linear-gradient(to right, transparent, #000 4%, #000 96%, transparent); -webkit-mask-composite:source-in; mask-composite:intersect; }
-  .reading.poster .line { font-weight:inherit; }
-  .reading.poster .current { font-size:var(--size); line-height:1.7; color:var(--base); --soft:clamp(6px,.45em,16px); --near:.2em; --far:.46em; }
-  .reading.poster .current.chorus { --word:color-mix(in srgb, var(--reading-primary) 52%, var(--reading-accent)); --near:.32em; --far:.64em; }
-  .reading.poster .current .plain { color:var(--word); }
-  .reading.poster .current .timed { display:inline-block; color:transparent; -webkit-text-fill-color:transparent; -webkit-background-clip:text; background-clip:text;
-    background-image:linear-gradient(90deg, var(--word) calc(var(--p,0%) + (var(--pn,0) - 1) * var(--soft)), var(--base) calc(var(--p,0%) + var(--pn,0) * var(--soft))); }
-  .reading.poster .current .timed.glow { filter:drop-shadow(0 0 var(--near) color-mix(in srgb, var(--word) var(--g1,0%), transparent)) drop-shadow(0 0 var(--far) color-mix(in srgb, var(--word) var(--g2,0%), transparent)); }
-  .reading.poster .near { font-size:calc(var(--size) * .72); line-height:1.3; display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+  .reading.poster .current { line-height:1.7; }
+  .reading.poster .near { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
   .reading.poster .near > div { display:inline; }
-  .reading.poster .near.passed { color:var(--word); opacity:.52; filter:blur(1.1px); }
-  .reading.poster .near.waiting { color:color-mix(in srgb, var(--reading-primary) 46%, transparent); opacity:.72; filter:blur(.7px); }
-  .reading.poster .secondary { font-size:.5em; font-weight:500; margin-top:.3em; line-height:1.35; color:color-mix(in srgb, var(--reading-primary) 68%, transparent); }
-  .reading.poster .romaji { color:color-mix(in srgb, var(--reading-primary) 68%, transparent); }
-  @media (prefers-reduced-motion: reduce) { .reading.poster .near, .reading.poster .current .timed.glow { filter:none; } }
-  .reading.strip { height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; text-shadow:0 1px 3px rgba(0,0,0,.55), 0 0 14px rgba(0,0,0,.35); }
+
+  .reading.strip { --size:clamp(18px,2.3vw,34px); --weight:500; --base:color-mix(in srgb, var(--reading-primary) 52%, transparent); height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
+  /* the caption is there to be read ahead of the singing, over any picture: its unsung text is less faint than the host's 34% */
+  /* a dark edge keeps the caption readable over whatever the display mode draws; as a filter, because a text shadow would be painted over the swept fill */
+  .reading.strip .current { filter:drop-shadow(0 1px 2px rgba(0,0,0,.55)) drop-shadow(0 0 10px rgba(0,0,0,.35)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }
-  .reading.strip .current { font-size:clamp(18px,2.3vw,34px); font-weight:500; line-height:1.75; }
 `;
 
-function appendOriginal(container, line, showRuby, timed) {
+// colours: the theme's keyword colour spans of this line's text (UTF-16 offsets)
+function appendOriginal(container, line, showRuby, timed, colours = []) {
   const words = line.words?.length ? line.words : [{ text: line.fullText, startTime: line.startTime, endTime: line.endTime }];
   // main: the lyric text itself, as opposed to the small reading above it (which gets no glow)
   const mark = (element, unit, main = true) => {
@@ -223,21 +226,29 @@ function appendOriginal(container, line, showRuby, timed) {
       timed.push({ element, start: unit.startTime, end: unit.endTime, main });
     }
   };
+  let offset = 0;
   for (const word of words) {
     const validSyllables = word.syllables?.length && word.syllables.map(s => s.text + (s.endsWithSpace ? ' ' : '')).join('') === word.text;
     const syllables = validSyllables ? word.syllables : [word];
     for (const unit of syllables) {
+      const from = offset, to = offset + unit.text.length;
+      offset = to + (validSyllables && unit.endsWithSpace ? 1 : 0);
       const text = document.createElement('span'); text.textContent = unit.text;
       mark(text, unit);
+      let outer = text;
       if (showRuby && unit.ruby?.length) {
-        const ruby = document.createElement('ruby'); ruby.append(text);
+        outer = document.createElement('ruby'); outer.append(text);
         const rt = document.createElement('rt');
         for (const reading of unit.ruby) {
           const kana = document.createElement('span'); kana.textContent = reading.text;
           mark(kana, reading, false); rt.append(kana);
         }
-        ruby.append(rt); container.append(ruby);
-      } else container.append(text);
+        outer.append(rt);
+      }
+      // a keyword's colour replaces the sung colour of the units it covers, readings included
+      const keyword = colours.find(range => range.startOffset < to && range.endOffset > from);
+      if (keyword) outer.style.setProperty('--word', keyword.color);
+      container.append(outer);
       if (validSyllables && unit.endsWithSpace) container.append(document.createTextNode(' '));
     }
   }
@@ -286,13 +297,15 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     if (selected >= 0 && time > lines[selected].endTime + 1) return -1;
     return selected;
   };
+  // Keyword colours follow the same switch as Folia's poster lyrics (its Monet setting).
+  const keywordsOn = () => folium.internals?.stores?.visualizerSettings?.getState?.().monetTuning?.keywordColoringEnabled !== false;
   const paint = () => {
     const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
     root.style.setProperty('--reading-primary', theme.primaryColor);
     root.style.setProperty('--reading-secondary', theme.secondaryColor);
     root.style.setProperty('--reading-accent', theme.accentColor);
     root.style.fontFamily = folium.theme.resolveFontStack(theme);
-    if (poster) root.style.setProperty('--weight', String(folium.theme.resolveFontWeight?.(theme, 600) ?? 600));
+    if (!strip) root.style.setProperty('--weight', String(folium.theme.resolveFontWeight?.(theme, 600) ?? 600));
     // The wall remains visible outside the player; showText belongs to the player stage.
     root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);
     if (strip === 'bottom') {
@@ -308,18 +321,28 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     const time = ctx.currentTime.get(), index = indexAt(time);
     // the romanization row is Folia's to switch: it follows the host's subtitle setting
     const romanized = !strip && hostShowsRomanization(display);
-    const key = JSON.stringify([settings.primary, settings.bilingual, settings.ruby, romanized]);
+    const keywords = keywordsOn() && theme.wordColors?.length ? theme.wordColors : null;
+    const key = JSON.stringify([settings.primary, settings.bilingual, settings.ruby, romanized, keywords]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
       const options = strip
         ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
         : { primary: settings.primary === 'translation' ? 'translation' : 'original', bilingual: settings.bilingual !== false, ruby: settings.ruby !== false, romaji: romanized };
+      const coloursOf = line => {
+        if (!keywords) return [];
+        try { return folium.lyrics?.buildWordColorRanges?.(line.fullText, keywords) || []; } catch { return []; }
+      };
       // where: 'passed' for the line before the current one, 'waiting' for the one after
       const addLine = (line, current, where = '') => {
         if (!line) return;
         const row = document.createElement(!poster && !strip && !ctx.isPreview && folium.env.context === 'main' ? 'button' : 'div');
         row.className = current ? 'line current' + (line.isChorus ? ' chorus' : '') : 'line near ' + where;
-        if (current) currentEnd = line.endTime;
+        if (current) {
+          // the glow of the last units lasts until the host would take the line off the screen
+          let end = line.endTime;
+          try { end = Math.max(end, folium.lyrics?.getLineRenderEndTime?.(line) ?? end); } catch { /* keep the line's own end */ }
+          currentEnd = end;
+        }
         if (row.tagName === 'BUTTON') {
           row.type = 'button'; row.title = '跳到这句歌词';
           row.addEventListener('click', () => folium.playback.seekToLyricTime(line.startTime));
@@ -327,7 +350,7 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
         const main = document.createElement('div');
         const translated = options.primary === 'translation' && !!line.translation;
         if (translated) { main.textContent = line.translation; main.className = 'plain'; }
-        else appendOriginal(main, line, options.ruby && current, current ? timed : []);
+        else appendOriginal(main, line, options.ruby && current, current ? timed : [], coloursOf(line));
         row.append(main);
         // the romanization goes with the original, wherever that is drawn
         const romaji = current && options.romaji && line.romanization ? document.createElement('div') : null;
@@ -335,7 +358,7 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
         if (romaji && !translated) row.append(romaji);
         if (current && options.bilingual && line.translation) {
           const secondary = document.createElement('div'); secondary.className = 'secondary';
-          if (translated) appendOriginal(secondary, line, options.ruby, timed);
+          if (translated) appendOriginal(secondary, line, options.ruby, timed, coloursOf(line));
           else secondary.textContent = line.translation;
           row.append(secondary);
           if (romaji && translated) row.append(romaji);
@@ -351,9 +374,6 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     }
     for (const unit of timed) {
       const sung = time >= unit.end, now = time >= unit.start && time < unit.end;
-      unit.element.classList.toggle('sung', sung);
-      unit.element.classList.toggle('now', now);
-      if (!poster) continue;
       // the sweep: how much of this unit is filled, as a share of its width
       const filled = sung ? 1 : now ? (time - unit.start) / Math.max(.001, unit.end - unit.start) : 0;
       if (unit.filled !== filled) {
@@ -375,7 +395,9 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
   const unsubscribeClock = ctx.currentTime.on('change', paint);
   const unsubscribeContext = ctx.subscribe(paint);
   const unsubscribeParams = params.subscribe(paint);
-  return () => { unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); root.remove(); style.remove(); };
+  // the keyword switch lives in a host store; repaint when it is flipped
+  const unsubscribeStore = folium.internals?.stores?.visualizerSettings?.subscribe?.(paint);
+  return () => { unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); unsubscribeStore?.(); root.remove(); style.remove(); };
 }
 return { mountReading };
 })();

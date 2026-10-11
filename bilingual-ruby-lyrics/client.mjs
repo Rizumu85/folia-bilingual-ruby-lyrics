@@ -223,10 +223,11 @@ const CSS = `
   /* A soft shadow in the theme's background colour keeps it readable over whatever the display
      mode draws. Over a see-through player page (see seeThrough) what is behind the text is not
      the theme's background and a wide shadow reads as a smudge, so the text gets a hard shadow
-     instead: a copy of the glyphs in that colour, set down and to the right, with no blur. As a
-     filter, so that the readings above the text get the same edge. */
+     instead: the glyphs again in that colour, set down and to the right with no blur, twice, so
+     that the shadow is one solid slab (.06em across, .09em down). As a filter, so that the
+     readings above the text get the same edge. */
   .reading.strip .current { filter:drop-shadow(0 1px 3px color-mix(in srgb, var(--reading-bg,#000) 55%, transparent)) drop-shadow(0 0 14px color-mix(in srgb, var(--reading-bg,#000) 35%, transparent)); }
-  .reading.strip.clear .current { filter:drop-shadow(max(1px,.05em) max(1px,.05em) 0 color-mix(in srgb, var(--reading-bg,#000) 85%, transparent)); }
+  .reading.strip.clear .current { filter:drop-shadow(max(.5px,.03em) max(.75px,.045em) 0 color-mix(in srgb, var(--reading-bg,#000) 90%, transparent)) drop-shadow(max(.5px,.03em) max(.75px,.045em) 0 color-mix(in srgb, var(--reading-bg,#000) 90%, transparent)); }
   /* the bottom offset is worked out from where Folia's own subtitles are; see paint() */
   .reading.strip.bottom { bottom:150px; transition:bottom .25s ease-out; }
   .reading.strip.top { top:clamp(16px,3.5vh,40px); }
@@ -298,6 +299,20 @@ const hostRows = display => {
 // (the host computes it outside its stores), so the stored setting is read.
 const hostLayerHidden = display => display.hideTranslationSubtitle === true || hostSetting('hide_player_translation_subtitle') === 'true';
 
+// Where Folia's own subtitle rows sit on the page: how far the top of the first row is above the
+// bottom edge of their box, and where that edge is. Read from the layout (not from on-screen
+// rectangles, which move while the rows animate in). Null while no row is shown. The rows are
+// found by the same marker the stylesheet below goes by.
+function hostSubtitleBox(doc) {
+  const row = doc.querySelector('[data-subtitle-track]'), box = row?.parentElement?.parentElement?.parentElement;
+  if (!box?.offsetParent) return null;
+  let top = 0;
+  for (let node = row; node && node !== box; node = node.offsetParent) { if (!box.contains(node)) return null; top += node.offsetTop; }
+  const bottom = parseFloat(doc.defaultView.getComputedStyle(box).bottom);
+  if (!Number.isFinite(bottom)) return null;
+  return { height: box.offsetHeight - top, bottom, edge: box.offsetParent.getBoundingClientRect().bottom };
+}
+
 // The player page shows what is behind the window (transparent background, or the system's blur)
 // instead of the theme's background. A shadow in the theme's background colour then has nothing
 // to blend into.
@@ -306,7 +321,7 @@ const seeThrough = () => hostSetting('transparent_player_background') === 'true'
 // The caption's shadow, for text: soft, in the theme's background colour; hard and offset over a
 // see-through player page.
 const captionShadow = theme => seeThrough()
-  ? `max(1px,.05em) max(1px,.05em) 0 color-mix(in srgb, ${theme.backgroundColor} 85%, transparent)`
+  ? [1, 2].map(step => `max(${step * .5}px,${step * .03}em) max(${step * .75}px,${step * .045}em) 0 color-mix(in srgb, ${theme.backgroundColor} 90%, transparent)`).join(', ')
   : `0 1px 3px color-mix(in srgb, ${theme.backgroundColor} 55%, transparent), 0 0 14px color-mix(in srgb, ${theme.backgroundColor} 35%, transparent)`;
 
 // A stylesheet that gives Folia's own subtitle rows (the romanization and the translation under
@@ -334,6 +349,11 @@ function glowAt(time, start, end, lineEnd) {
   return smooth(1 - (time - peak) / Math.max(.18, Math.max(lineEnd, end + 1.05) - peak));
 }
 
+// Distance, in px, between the caption's box and the top of Folia's first subtitle row. The
+// caption's line box already leaves a third of an em under its text, a little more than the rows
+// leave between themselves; it is taken in slightly so that the three lines read as one group.
+const STRIP_GAP = -4;
+
 // strip: only the line being sung, with its readings, as a caption over another display mode
 function mountReading(container, ctx, folium, params, { poster = false, strip = null } = {}) {
   const style = document.createElement('style'); style.textContent = CSS;
@@ -341,6 +361,8 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
   container.append(style, root);
   const lines = pairBilingual(ctx.lines);
   let previousIndex = -2, optionsKey = '', timed = [], currentEnd = 0;
+  // the caption's place above Folia's subtitle rows, as last measured (see paint)
+  let measured = null, measuredAt = 0;
   const indexAt = time => {
     if (ctx.staticMode) return Math.min(lines.length - 1, Math.max(0, ctx.staticLineIndex ?? 0));
     let selected = -1;
@@ -380,14 +402,35 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     // The wall remains visible outside the player; showText belongs to the player stage.
     root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);
     if (strip === 'bottom') {
-      // Sit right above Folia's own subtitles. They start 112px up (32px while the player
-      // controls are hidden) and are one row tall, two when romanization and translation are
-      // both shown, none when subtitles are off or the bottom subtitle layer is hidden; a row is
-      // the subtitle font at 1.5 line height.
-      // The caption's own line box has empty room under the text, so it may dip 12px into the row.
+      // Sit just above Folia's own subtitle rows: none when subtitles are off or the bottom
+      // subtitle layer is hidden, else one, or two when romanization and translation are both shown.
       const rows = hostLayerHidden(display) ? 0 : Number(shown.translation) + Number(shown.romaji);
-      const font = Math.min(20, Math.max(18, .026 * (root.ownerDocument.defaultView?.innerWidth || 1280))) * (display.subtitleFontScale || 1);
-      root.style.bottom = Math.round((display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 - (rows ? 12 : 0)) + 'px';
+      const view = root.ownerDocument.defaultView, width = view?.innerWidth || 1280, scale = display.subtitleFontScale || 1;
+      // Where the rows really are is measured on the page, a few times a second. The tallest box
+      // seen for the current settings is kept, so that the caption does not bob when a line has
+      // one row fewer, and the last measurement serves while no row is shown.
+      const now = Date.now();
+      if (rows && now - measuredAt > 250) {
+        measuredAt = now;
+        let box = null;
+        try { box = hostSubtitleBox(root.ownerDocument); } catch { /* fall back to the estimate */ }
+        if (box) {
+          const same = measured && measured.rows === rows && measured.width === width && measured.scale === scale;
+          const mine = (root.offsetParent || container.host)?.getBoundingClientRect?.().bottom ?? box.edge;
+          measured = { rows, width, scale, height: Math.max(box.height, same ? measured.height : 0), bottom: box.bottom + mine - box.edge };
+        }
+      }
+      let bottom;
+      if (rows && measured && measured.rows === rows && measured.width === width && measured.scale === scale) {
+        // the caption's line box has about a third of an em of empty room under the text, which is the gap
+        bottom = measured.bottom + measured.height + STRIP_GAP;
+      } else {
+        // not measured yet: the rows start 112px up (32px while the player controls are hidden),
+        // a row is the subtitle font at 1.5 line height
+        const font = Math.min(20, Math.max(18, .026 * width)) * scale;
+        bottom = (display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 - (rows ? 12 : 0);
+      }
+      root.style.bottom = Math.round(bottom) + 'px';
     }
     const time = ctx.currentTime.get(), index = indexAt(time);
     // keyword colours are for the display mode and the poster; the caption has the theme's three colours only

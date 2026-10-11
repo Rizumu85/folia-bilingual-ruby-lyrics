@@ -30,13 +30,17 @@ export function mountPanel(container, params) {
         </div>
       </div>
       <div class="row">
+        <span id="lyrics-step-label">逐字跳亮</span>
+        <button class="switch" type="button" role="switch" aria-labelledby="lyrics-step-label" aria-checked="false" data-switch="step"></button>
+      </div>
+      <div class="row">
         <span id="lyrics-poster-label">海报歌词（实验性）</span>
         <button class="switch" type="button" role="switch" aria-labelledby="lyrics-poster-label" aria-checked="false" data-switch="poster"></button>
       </div>
     </section>`;
 
-  // ruby is on unless turned off; the poster override is off unless turned on
-  const isOn = (values, key) => key === 'poster' ? values.poster === true : values[key] !== false;
+  // ruby is on unless turned off; the poster override and the step fill are off unless turned on
+  const isOn = (values, key) => key === 'poster' || key === 'step' ? values[key] === true : values[key] !== false;
   const refresh = () => {
     const values = params.get();
     const primary = values.primary === 'translation' ? 'translation' : 'original';

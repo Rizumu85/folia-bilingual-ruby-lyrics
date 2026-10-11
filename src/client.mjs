@@ -37,6 +37,13 @@ export default function activate(folium) {
         ],
       },
       {
+        key: 'step',
+        type: 'boolean',
+        label: label('逐字跳亮', 'Light each character at once'),
+        description: label('显示模式和海报歌词里，每个字到点时整个亮起（和注音字幕条一样一字一跳），而不是从左到右扫过。光晕、颜色等其余效果不变。', 'In the display mode and the poster lyrics, each character lights up whole when its time comes (one by one, as in the ruby caption) instead of being swept from left to right. The glow, the colours and everything else stay the same.'),
+        defaultValue: false,
+      },
+      {
         key: 'poster',
         type: 'boolean',
         label: label('海报歌词（实验性）', 'Poster lyrics (experimental)'),

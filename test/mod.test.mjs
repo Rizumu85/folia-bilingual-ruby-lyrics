@@ -180,7 +180,7 @@ test('the mod registers one display mode, one panel tab and one settings section
   const dispose = activate(host.folium);
   assert.equal(host.registered.visualizers.length, 1);
   assert.equal(host.registered.playerPanelTabs.length, 1);
-  assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'ruby', 'strip', 'poster']);
+  assert.deepEqual(host.registered.settingsSections[0].settings.map(setting => setting.key), ['primary', 'ruby', 'strip', 'step', 'poster']);
   assert.equal(host.registered.settingsSections[0].settings.find(setting => setting.key === 'poster').defaultValue, false);
   assert.deepEqual(host.registered.commands.map(command => command.id), ['toggle-ruby', 'caption']);
   // the caption command goes bottom, top, off, and says so each time

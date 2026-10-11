@@ -259,7 +259,9 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
       }
       if (strip) continue; // the caption has no sweep and no glow
       // the sweep: how much of this unit is filled, as a share of its width
-      const filled = sung ? 1 : now ? (time - unit.start) / Math.max(.001, unit.end - unit.start) : 0;
+      // (with the "step" setting a unit is filled whole the moment it starts, as in the caption,
+      // instead of being swept; its glow rises as before)
+      const filled = sung ? 1 : now ? (settings.step === true ? 1 : (time - unit.start) / Math.max(.001, unit.end - unit.start)) : 0;
       if (unit.filled !== filled) {
         unit.filled = filled;
         unit.element.style.setProperty('--pn', filled.toFixed(3));

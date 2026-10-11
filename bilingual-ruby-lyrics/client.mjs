@@ -428,7 +428,9 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
       }
       if (strip) continue; // the caption has no sweep and no glow
       // the sweep: how much of this unit is filled, as a share of its width
-      const filled = sung ? 1 : now ? (time - unit.start) / Math.max(.001, unit.end - unit.start) : 0;
+      // (with the "step" setting a unit is filled whole the moment it starts, as in the caption,
+      // instead of being swept; its glow rises as before)
+      const filled = sung ? 1 : now ? (settings.step === true ? 1 : (time - unit.start) / Math.max(.001, unit.end - unit.start)) : 0;
       if (unit.filled !== filled) {
         unit.filled = filled;
         unit.element.style.setProperty('--pn', filled.toFixed(3));
@@ -587,13 +589,17 @@ function mountPanel(container, params) {
         </div>
       </div>
       <div class="row">
+        <span id="lyrics-step-label">逐字跳亮</span>
+        <button class="switch" type="button" role="switch" aria-labelledby="lyrics-step-label" aria-checked="false" data-switch="step"></button>
+      </div>
+      <div class="row">
         <span id="lyrics-poster-label">海报歌词（实验性）</span>
         <button class="switch" type="button" role="switch" aria-labelledby="lyrics-poster-label" aria-checked="false" data-switch="poster"></button>
       </div>
     </section>`;
 
-  // ruby is on unless turned off; the poster override is off unless turned on
-  const isOn = (values, key) => key === 'poster' ? values.poster === true : values[key] !== false;
+  // ruby is on unless turned off; the poster override and the step fill are off unless turned on
+  const isOn = (values, key) => key === 'poster' || key === 'step' ? values[key] === true : values[key] !== false;
   const refresh = () => {
     const values = params.get();
     const primary = values.primary === 'translation' ? 'translation' : 'original';
@@ -1494,6 +1500,13 @@ function activate(folium) {
           { value: 'bottom', label: label('底部', 'Bottom') },
           { value: 'top', label: label('顶部', 'Top') },
         ],
+      },
+      {
+        key: 'step',
+        type: 'boolean',
+        label: label('逐字跳亮', 'Light each character at once'),
+        description: label('显示模式和海报歌词里，每个字到点时整个亮起（和注音字幕条一样一字一跳），而不是从左到右扫过。光晕、颜色等其余效果不变。', 'In the display mode and the poster lyrics, each character lights up whole when its time comes (one by one, as in the ruby caption) instead of being swept from left to right. The glow, the colours and everything else stay the same.'),
+        defaultValue: false,
       },
       {
         key: 'poster',

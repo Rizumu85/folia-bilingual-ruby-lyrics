@@ -201,6 +201,26 @@ test('poster lyrics and the ruby caption touch nothing until their settings are 
   for (const layer of host.registered.stageLayers) layer.mount(container, { lines, song: null })();
 });
 
+test('lines from the file keep what Folia worked out for its own copy: chorus effects, song part', async () => {
+  const host = fakeHost();
+  let shown = null;
+  const lrc = ['[00:01:00]雨[00:01:50]が歌う[00:03:00]', '[00:05:00]風[00:05:50]が止む[00:07:00]', '@Offset=0', '@Ruby1=雨,[00:00:00]あめ[00:00:50]', '@Ruby2=風,[00:00:00]かぜ[00:00:50]', ''].join('\n');
+  const integration = createIntegration(host.folium, { readEmbedded: async () => [{ text: lrc }] });
+  const base = { lines: [
+    { fullText: '雨が歌う', startTime: 1, endTime: 3, words: [{ text: '雨が歌う', startTime: 1, endTime: 3 }], translation: '雨在歌唱', isChorus: true, chorusEffect: 'beams', songPart: 'chorus', renderHints: { rawDuration: 2 } },
+    { fullText: '風が止む', startTime: 5, endTime: 7, words: [], wordSegments: ['風が', '止まる'] },
+  ] };
+  host.playback.change({ currentSong: { id: 'local', localData: { filePath: 'D:/music/test.mp3' } }, lyrics: base, setLyricsState: value => { shown = value; } });
+  await settle();
+  const [first, second] = shown.lines;
+  assert.deepEqual([first.isChorus, first.chorusEffect, first.songPart, first.translation], [true, 'beams', 'chorus', '雨在歌唱']);
+  // the timing and the readings are the file's, and stale render hints are not carried over
+  assert.deepEqual([first.words.length, first.words[0].syllables[0].ruby[0].text, 'renderHints' in first], [2, 'あめ', false]);
+  // word boundaries saved for a different text are dropped
+  assert.equal('wordSegments' in second, false);
+  integration.dispose();
+});
+
 test('a failed read of the embedded lyrics is reported once and not retried for the same song', async () => {
   const host = fakeHost();
   let reads = 0;

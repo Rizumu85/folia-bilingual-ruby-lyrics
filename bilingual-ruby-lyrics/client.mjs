@@ -1210,10 +1210,30 @@ const carryTranslations = (lines,hostLines) => {
     return {...line,translation:translationOf(match),...(alternateTexts.length ? {alternateTexts} : {})};
   });
 };
+// What Folia worked out for its own copy of a line stays on ours: the chorus mark and its light
+// effect, the song part, the singer, background vocals, saved word boundaries. Only the text, the
+// timing and the readings come from the file. Render hints follow the timing, so they are left
+// for the host to rebuild.
+const FROM_THE_FILE = new Set(['words','startTime','endTime','fullText','translation','romanization','alternateTexts','renderHints']);
+const keepHostData = (lines,hostLines) => {
+  const host=hostLines || [];
+  if (!host.length) return lines;
+  const near = (item,line) => Math.abs(item.startTime-line.startTime)<=.02;
+  return lines.map(line => {
+    const match=host.find(item => near(item,line) && item.fullText===line.fullText) || host.find(item => near(item,line)) || host.find(item => item.fullText===line.fullText);
+    if (!match) return line;
+    const kept=Object.fromEntries(Object.entries(match).filter(([name]) => !FROM_THE_FILE.has(name)));
+    // saved word boundaries only fit the text they were saved for
+    if (Array.isArray(kept.wordSegments) && kept.wordSegments.join('')!==line.fullText) delete kept.wordSegments;
+    return {...kept,...line};
+  });
+};
 const hasRuby = lines => lines?.some(line => line.words?.some(word => word.ruby?.length || word.syllables?.some(unit => unit.ruby?.length)));
-// Same source precedence as Folia 0.7.12 selectLocalSongLyricsSource.
+// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.17).
 const hostSource = (record,priority) => {
   if (record?.lyricsSource) return record.lyricsSource;
+  // 0.7.15+: a song the user marked as instrumental shows no lyrics
+  if (record?.markedPureMusic) return 'online';
   if (priority==='online' && record?.matchedLyrics) return 'online';
   if (record?.hasLocalLyrics && record.localLyricsContent) return 'local';
   if (record?.hasEmbeddedLyrics && record.embeddedLyricsContent) return 'embedded';
@@ -1274,7 +1294,7 @@ function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(r
         return;
       }
       // Folia's own modes show this line when its subtitle setting asks for romanization.
-      const lines=withRomanization(cleanHints(carryTranslations(pairBilingual(rich.lines),base?.lines)));
+      const lines=withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),base?.lines)),base?.lines));
       applied={...(base || {}),lines,isWordByWord:rich.isWordByWord ?? base?.isWordByWord ?? false};
       ownWrite=true;
       try {store.getState().setLyricsState(applied);store.getState().setCurrentLineIndex(-1);}

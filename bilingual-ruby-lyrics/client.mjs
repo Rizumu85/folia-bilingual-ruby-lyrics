@@ -257,19 +257,23 @@ function appendOriginal(container, line, showRuby, timed, colours = []) {
   }
 }
 
-// Folia reports its two-row subtitle setting (romanization above translation) to mods as
-// 'translation'. The stored setting says which it is; it is read at most once a second.
+// Which rows go with the lyrics is the host's to say, with its subtitle setting: the translation,
+// the romanization, both, or neither. This mod has no switch of its own for them.
+// Folia reports its two-row setting (romanization above translation) to mods as 'translation'.
+// The stored setting says which it is; it is read at most once a second.
 let twoRows = { at: -Infinity, value: false };
-const hostShowsRomanization = display => {
-  if (display.subtitleContentMode === 'romanization') return true;
-  if (display.subtitleContentMode !== 'translation') return false;
+const hostRows = display => {
+  if (display.showSubtitleTranslation === false) return { translation: false, romaji: false };
+  const mode = display.subtitleContentMode ?? 'translation';
+  if (mode === 'romanization') return { translation: false, romaji: true };
+  if (mode !== 'translation') return { translation: false, romaji: false };
   const now = Date.now();
   if (now - twoRows.at > 1000) {
     let value = false;
     try { value = globalThis.localStorage?.getItem('subtitle_content_mode') === 'both'; } catch { /* no storage here */ }
     twoRows = { at: now, value };
   }
-  return twoRows.value;
+  return { translation: true, romaji: twoRows.value };
 };
 
 // How strongly a unit glows at `time`, 0 to 1, with the host's timing for its poster lyrics: the
@@ -304,6 +308,7 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
   const keywordsOn = () => folium.internals?.stores?.visualizerSettings?.getState?.().monetTuning?.keywordColoringEnabled !== false;
   const paint = () => {
     const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
+    const shown = hostRows(display);
     root.style.setProperty('--reading-primary', theme.primaryColor);
     root.style.setProperty('--reading-secondary', theme.secondaryColor);
     root.style.setProperty('--reading-accent', theme.accentColor);
@@ -326,23 +331,21 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     if (strip === 'bottom') {
       // Sit right above Folia's own subtitles. They start 112px up (32px while the player
       // controls are hidden) and are one row tall, two when romanization and translation are
-      // both shown, none when subtitles are off; a row is the subtitle font at 1.5 line height.
+      // both shown, none when subtitles are off or the bottom subtitle layer is hidden; a row is
+      // the subtitle font at 1.5 line height.
       // The caption's own line box has empty room under the text, so it may dip 12px into the row.
-      const mode = display.showSubtitleTranslation === false ? 'none' : display.subtitleContentMode;
-      const rows = mode === 'none' ? 0 : mode === 'translation' && hostShowsRomanization(display) ? 2 : 1;
+      const rows = display.hideTranslationSubtitle ? 0 : Number(shown.translation) + Number(shown.romaji);
       const font = Math.min(20, Math.max(18, .026 * (root.ownerDocument.defaultView?.innerWidth || 1280))) * (display.subtitleFontScale || 1);
       root.style.bottom = Math.round((display.isPlayerChromeHidden ? 32 : 112) + rows * (font * 1.5 + 4) + Math.max(0, rows - 1) * 8 - (rows ? 12 : 0)) + 'px';
     }
     const time = ctx.currentTime.get(), index = indexAt(time);
-    // the romanization row is Folia's to switch: it follows the host's subtitle setting
-    const romanized = !strip && hostShowsRomanization(display);
     const keywords = keywordsOn() && theme.wordColors?.length ? theme.wordColors : null;
-    const key = JSON.stringify([settings.primary, settings.bilingual, settings.ruby, romanized, keywords]);
+    const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
       const options = strip
         ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
-        : { primary: settings.primary === 'translation' ? 'translation' : 'original', bilingual: settings.bilingual !== false, ruby: settings.ruby !== false, romaji: romanized };
+        : { primary: settings.primary === 'translation' ? 'translation' : 'original', bilingual: shown.translation, ruby: settings.ruby !== false, romaji: shown.romaji };
       const coloursOf = line => {
         if (!keywords) return [];
         try { return folium.lyrics?.buildWordColorRanges?.(line.fullText, keywords) || []; } catch { return []; }
@@ -537,10 +540,6 @@ function mountPanel(container, params) {
         </div>
       </div>
       <div class="row">
-        <span id="lyrics-bilingual-label">双语显示</span>
-        <button class="switch" type="button" role="switch" aria-labelledby="lyrics-bilingual-label" aria-checked="true" data-switch="bilingual"></button>
-      </div>
-      <div class="row">
         <span id="lyrics-ruby-label">显示注音</span>
         <button class="switch" type="button" role="switch" aria-labelledby="lyrics-ruby-label" aria-checked="true" data-switch="ruby"></button>
       </div>
@@ -558,7 +557,7 @@ function mountPanel(container, params) {
       </div>
     </section>`;
 
-  // bilingual and ruby are on unless turned off; the poster override is off unless turned on
+  // ruby is on unless turned off; the poster override is off unless turned on
   const isOn = (values, key) => key === 'poster' ? values.poster === true : values[key] !== false;
   const refresh = () => {
     const values = params.get();
@@ -1441,13 +1440,13 @@ function activate(folium) {
         key: 'primary',
         type: 'select',
         label: label('主要显示', 'Primary language'),
+        description: label('另一种语言和罗马音显示与否，跟随 Folia 自己的字幕设置（翻译、罗马音、两者、隐藏）。', 'Whether the other language and the romanization are shown follows Folia\'s own subtitle setting (translation, romanization, both, hidden).'),
         defaultValue: 'original',
         options: [
           { value: 'original', label: label('原文', 'Original') },
           { value: 'translation', label: label('译文', 'Translation') },
         ],
       },
-      { key: 'bilingual', type: 'boolean', label: label('双语显示', 'Show both languages'), defaultValue: true },
       { key: 'ruby', type: 'boolean', label: label('显示注音', 'Show ruby annotations'), defaultValue: true },
       {
         key: 'strip',
@@ -1544,7 +1543,6 @@ function activate(folium) {
       return say(zh + '：' + (enabled ? '开' : '关'));
     },
   });
-  toggle('bilingual', 'toggle-bilingual', '双语显示', 'bilingual lyrics', ['bilingual', '双语', '译文'], true);
   toggle('ruby', 'toggle-ruby', '注音显示', 'ruby annotations', ['ruby', 'furigana', '假名', '注音'], true);
   // one command for the caption: bottom, top, off, and round again
   folium.registries.commands.register({

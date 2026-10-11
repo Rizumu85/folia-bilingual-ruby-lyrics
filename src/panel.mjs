@@ -18,10 +18,6 @@ export function mountPanel(container, params) {
         </div>
       </div>
       <div class="row">
-        <span id="lyrics-bilingual-label">双语显示</span>
-        <button class="switch" type="button" role="switch" aria-labelledby="lyrics-bilingual-label" aria-checked="true" data-switch="bilingual"></button>
-      </div>
-      <div class="row">
         <span id="lyrics-ruby-label">显示注音</span>
         <button class="switch" type="button" role="switch" aria-labelledby="lyrics-ruby-label" aria-checked="true" data-switch="ruby"></button>
       </div>
@@ -39,7 +35,7 @@ export function mountPanel(container, params) {
       </div>
     </section>`;
 
-  // bilingual and ruby are on unless turned off; the poster override is off unless turned on
+  // ruby is on unless turned off; the poster override is off unless turned on
   const isOn = (values, key) => key === 'poster' ? values.poster === true : values[key] !== false;
   const refresh = () => {
     const values = params.get();

@@ -16,13 +16,13 @@ export default function activate(folium) {
         key: 'primary',
         type: 'select',
         label: label('主要显示', 'Primary language'),
+        description: label('另一种语言和罗马音显示与否，跟随 Folia 自己的字幕设置（翻译、罗马音、两者、隐藏）。', 'Whether the other language and the romanization are shown follows Folia\'s own subtitle setting (translation, romanization, both, hidden).'),
         defaultValue: 'original',
         options: [
           { value: 'original', label: label('原文', 'Original') },
           { value: 'translation', label: label('译文', 'Translation') },
         ],
       },
-      { key: 'bilingual', type: 'boolean', label: label('双语显示', 'Show both languages'), defaultValue: true },
       { key: 'ruby', type: 'boolean', label: label('显示注音', 'Show ruby annotations'), defaultValue: true },
       {
         key: 'strip',
@@ -119,7 +119,6 @@ export default function activate(folium) {
       return say(zh + '：' + (enabled ? '开' : '关'));
     },
   });
-  toggle('bilingual', 'toggle-bilingual', '双语显示', 'bilingual lyrics', ['bilingual', '双语', '译文'], true);
   toggle('ruby', 'toggle-ruby', '注音显示', 'ruby annotations', ['ruby', 'furigana', '假名', '注音'], true);
   // one command for the caption: bottom, top, off, and round again
   folium.registries.commands.register({

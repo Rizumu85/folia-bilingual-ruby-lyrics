@@ -86,7 +86,7 @@ export default function activate(folium) {
   });
   // The display modes built into Folia do not draw readings; this caption does, on top of them.
   const OWN_MODE = 'mod:bilingual-ruby-lyrics:reading';
-  const modeStore = folium.internals.stores.visualizerSettings;
+  const modeStore = folium.internals?.stores?.visualizerSettings;
   const hasReadings = lines => lines.some(line => line.words?.some(word => word.syllables?.some(unit => unit.ruby?.length)));
   folium.registries.stageLayers.register({
     id: 'ruby-caption',
@@ -111,13 +111,13 @@ export default function activate(folium) {
       let dispose = null, shown = null;
       const sync = () => {
         const position = params.get().strip;
-        const wanted = (position === 'top' || position === 'bottom') && modeStore?.getState().visualizerMode !== OWN_MODE ? position : null;
+        const wanted = (position === 'top' || position === 'bottom') && modeStore?.getState?.()?.visualizerMode !== OWN_MODE ? position : null;
         if (wanted === shown) return;
         dispose?.(); dispose = null; shown = wanted;
         if (wanted) dispose = mountReading(container, ctx, folium, params, { strip: wanted });
       };
       sync();
-      const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe(sync);
+      const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe?.(sync);
       return () => { stopRestyle(); unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
     },
   });

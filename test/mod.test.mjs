@@ -208,17 +208,61 @@ test('lines from the file keep what Folia worked out for its own copy: chorus ef
   const integration = createIntegration(host.folium, { readEmbedded: async () => [{ text: lrc }] });
   const base = { lines: [
     { fullText: '雨が歌う', startTime: 1, endTime: 3, words: [{ text: '雨が歌う', startTime: 1, endTime: 3 }], translation: '雨在歌唱', isChorus: true, chorusEffect: 'beams', songPart: 'chorus', renderHints: { rawDuration: 2 } },
-    { fullText: '風が止む', startTime: 5, endTime: 7, words: [], wordSegments: ['風が', '止まる'] },
+    { fullText: '風が止む', startTime: 5, endTime: 7, words: [], wordSegments: ['風が', '止まる'], autoWordSegments: ['風', 'が', '止まる'] },
   ] };
+  base.lines[0].autoWordSegments = ['雨', 'が', '歌う'];
   host.playback.change({ currentSong: { id: 'local', localData: { filePath: 'D:/music/test.mp3' } }, lyrics: base, setLyricsState: value => { shown = value; } });
   await settle();
   const [first, second] = shown.lines;
   assert.deepEqual([first.isChorus, first.chorusEffect, first.songPart, first.translation], [true, 'beams', 'chorus', '雨在歌唱']);
   // the timing and the readings are the file's, and stale render hints are not carried over
   assert.deepEqual([first.words.length, first.words[0].syllables[0].ruby[0].text, 'renderHints' in first], [2, 'あめ', false]);
-  // word boundaries saved for a different text are dropped
+  // word boundaries saved for a different text are dropped, Folia's own ones too; those that fit stay
   assert.equal('wordSegments' in second, false);
+  assert.equal('autoWordSegments' in second, false);
+  assert.deepEqual(first.autoWordSegments, ['雨', 'が', '歌う']);
   integration.dispose();
+});
+
+test('lyrics Folia rebuilds from ours (its own word boundaries, 0.7.19) are still ours: its original comes back when the mod stops', async () => {
+  const host = fakeHost();
+  const written = [];
+  const lrc = ['[00:01:00]雨[00:01:50]が歌う[00:03:00]', '@Offset=0', '@Ruby1=雨,[00:00:00]あめ[00:00:50]', ''].join('\n');
+  let reads = 0;
+  const integration = createIntegration(host.folium, { readEmbedded: async () => { reads++; return [{ text: lrc }]; } });
+  const base = { lines: [{ fullText: '雨が歌う', startTime: 1, endTime: 3, words: [{ text: '雨が歌う', startTime: 1, endTime: 3 }] }] };
+  const setLyricsState = value => { written.push(value); host.playback.change({ lyrics: value }); };
+  host.playback.change({ currentSong: { id: 'local', localData: { filePath: 'D:/music/test.mp3' } }, lyrics: base, setLyricsState });
+  await settle();
+  const ours = written.at(-1);
+  assert.equal(ours.lines[0].words[0].syllables[0].ruby[0].text, 'あめ');
+  // the host adds its word boundaries to every line and puts the result in the store
+  const rebuilt = { ...ours, lines: ours.lines.map(line => ({ ...line, autoWordSegments: ['雨', 'が', '歌う'] })) };
+  host.playback.change({ lyrics: rebuilt });
+  await settle();
+  // nothing is read or written again, and the readings are still showing
+  assert.deepEqual([reads, written.length, host.playback.getState().lyrics === rebuilt], [1, 1, true]);
+  integration.dispose();
+  assert.equal(written.at(-1), base);
+});
+
+test('on a Folia whose internals have changed, reading the file is switched off with one notice and nothing throws', async () => {
+  const host = fakeHost();
+  // a later host: the playback store no longer has the setter the mod writes through
+  const state = host.playback.getState();
+  delete state.setLyricsState;
+  let reads = 0;
+  const integration = createIntegration(host.folium, { readEmbedded: async () => { reads++; return []; } });
+  host.playback.change({ currentSong: { id: 'local', localData: { filePath: 'D:/music/test.mp3' } }, lyrics: { lines: [] } });
+  await settle();
+  assert.deepEqual([reads, host.logs.length, host.toasts.length, integration.get().embedded], [0, 1, 1, false]);
+  integration.dispose();
+  // and the whole mod still starts on such a host
+  const other = fakeHost();
+  delete other.playback.getState().setLyricsState;
+  const dispose = activate(other.folium);
+  assert.equal(other.registered.visualizers.length, 1);
+  dispose();
 });
 
 test('a failed read of the embedded lyrics is reported once and not retried for the same song', async () => {

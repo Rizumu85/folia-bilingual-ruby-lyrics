@@ -328,7 +328,7 @@ const captionShadow = theme => seeThrough()
 // its display modes) the look of the caption they sit next to: opaque, the caption's shadow, and
 // no blurred plate behind them. Folia offers mods no styling hook for these rows, so the rules
 // go by the markers its subtitle layer happens to carry (data-subtitle-track and the layout
-// around it, the same from 0.7.12 to 0.7.18). If a later Folia changes them the rules simply stop
+// around it, the same from 0.7.12 to 0.7.19). If a later Folia changes them the rules simply stop
 // matching and its subtitles look as they always did.
 function hostSubtitleCss(theme) {
   const shadow = captionShadow(theme);
@@ -1417,13 +1417,16 @@ const keepHostData = (lines,hostLines) => {
     const match=host.find(item => near(item,line) && item.fullText===line.fullText) || host.find(item => near(item,line)) || host.find(item => item.fullText===line.fullText);
     if (!match) return line;
     const kept=Object.fromEntries(Object.entries(match).filter(([name]) => !FROM_THE_FILE.has(name)));
-    // saved word boundaries only fit the text they were saved for
-    if (Array.isArray(kept.wordSegments) && kept.wordSegments.join('')!==line.fullText) delete kept.wordSegments;
+    // word boundaries only fit the text they were made for: the user's saved ones, and (0.7.19 on)
+    // the ones Folia works out by itself
+    for (const name of ['wordSegments','autoWordSegments'])
+      if (Array.isArray(kept[name]) && kept[name].join('')!==line.fullText) delete kept[name];
     return {...kept,...line};
   });
 };
+const sameWords = (a,b) => a?.lines?.length===b?.lines?.length && a.lines.length>0 && a.lines.every((line,index) => line.words && line.words===b.lines[index].words);
 const hasRuby = lines => lines?.some(line => line.words?.some(word => word.ruby?.length || word.syllables?.some(unit => unit.ruby?.length)));
-// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.18).
+// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.19).
 const hostSource = (record,priority) => {
   if (record?.lyricsSource) return record.lyricsSource;
   // 0.7.15+: a song the user marked as instrumental shows no lyrics
@@ -1437,7 +1440,25 @@ const hostSource = (record,priority) => {
 
 // Folia owns source selection and the offset clock. Supplement its default embedded
 // LRC with the extra Ruby USLT item; never load former imports or plugin lead settings.
+// The parts of Folia's internals this file relies on. Internals carry no compatibility promise
+// and the declared host range reaches past the versions checked by hand, so they are looked at
+// before anything is done with them.
+function internalsFit(folium) {
+  try {
+    const store=folium.internals?.stores?.playback, state=store?.getState?.();
+    return typeof store?.subscribe==='function' && !!state && 'currentSong' in state && 'lyrics' in state
+      && typeof state.setLyricsState==='function' && typeof state.setCurrentLineIndex==='function';
+  } catch { return false; }
+}
+
 function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(record,folium.rpc)} = {}) {
+  if (!internalsFit(folium)) {
+    // A later Folia has changed what is used here: the readings in the file are left alone, with
+    // one notice, and the rest of the mod goes on working on the lyrics Folia has by itself.
+    const message='这个版本的 Folia 改了模组用到的内部接口，暂时读不了文件里的注音歌词；显示模式和其他功能不受影响。请更新模组。';
+    try {folium.log?.error?.(message);folium.ui?.toast?.(message,{type:'info',durationMs:6000});} catch { /* a notice is all this is */ }
+    return {get:()=>({song:null,embedded:false,error:message,ready:true}),dispose() {}};
+  }
   const store = folium.internals.stores.playback, embedded = new Map();
   const lyricSettings=folium.internals.stores.lyricSettings;
   let disposed=false, ownWrite=false, queued=false, revision=0, carrier=null, base=null, applied=null;
@@ -1445,7 +1466,16 @@ function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(r
   const reconcile = async () => {
     queued=false;
     if (disposed) return;
-    const ticket=++revision, snapshot=store.getState(), song=snapshot.currentSong, identity=songIdentity(song);
+    const snapshot=store.getState();
+    // Folia may rebuild the lyrics it holds without anything having changed for us: 0.7.19 adds
+    // its own word boundaries to every line once its segmenter has loaded, as it always did with
+    // the user's saved ones. Lines copied from ours still carry our word arrays; such lyrics are
+    // still ours, and what Folia had before we stepped in stays the thing to give back.
+    if (applied && snapshot.lyrics!==applied && songIdentity(snapshot.currentSong)===carrier && sameWords(snapshot.lyrics,applied)) {
+      applied=snapshot.lyrics;
+      return;
+    }
+    const ticket=++revision, song=snapshot.currentSong, identity=songIdentity(song);
     if (!song) {carrier=null;base=null;applied=null;state={song:null,embedded:false,error:null,ready:false};return;}
     const changed=identity!==carrier;
     if (changed) {carrier=identity;base=snapshot.lyrics;applied=null;embedded.clear();}
@@ -1525,7 +1555,7 @@ function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(r
     },
   };
 }
-return { createIntegration };
+return { internalsFit, createIntegration };
 })();
 
 // ---- client.mjs
@@ -1618,7 +1648,7 @@ function activate(folium) {
   });
   // The display modes built into Folia do not draw readings; this caption does, on top of them.
   const OWN_MODE = 'mod:bilingual-ruby-lyrics:reading';
-  const modeStore = folium.internals.stores.visualizerSettings;
+  const modeStore = folium.internals?.stores?.visualizerSettings;
   const hasReadings = lines => lines.some(line => line.words?.some(word => word.syllables?.some(unit => unit.ruby?.length)));
   folium.registries.stageLayers.register({
     id: 'ruby-caption',
@@ -1643,13 +1673,13 @@ function activate(folium) {
       let dispose = null, shown = null;
       const sync = () => {
         const position = params.get().strip;
-        const wanted = (position === 'top' || position === 'bottom') && modeStore?.getState().visualizerMode !== OWN_MODE ? position : null;
+        const wanted = (position === 'top' || position === 'bottom') && modeStore?.getState?.()?.visualizerMode !== OWN_MODE ? position : null;
         if (wanted === shown) return;
         dispose?.(); dispose = null; shown = wanted;
         if (wanted) dispose = mountReading(container, ctx, folium, params, { strip: wanted });
       };
       sync();
-      const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe(sync);
+      const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe?.(sync);
       return () => { stopRestyle(); unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
     },
   });

@@ -12,7 +12,7 @@
 
 把 `bilingual-ruby-lyrics` 文件夹（或模组市场下载的 zip）拖进 Folia 的模组面板，启用后在显示模式里选「双语 · 注音歌词」。
 
-需要 Folia 0.7.12 到 0.7.17。模组用到了 Folia 的内部接口，所以只声明逐个核对过的宿主版本；Folia 更新后需要等模组发布对应的新版本。
+需要 Folia 0.7.12 到 0.7.18。模组用到了 Folia 的内部接口，所以只声明逐个核对过的宿主版本；Folia 更新后需要等模组发布对应的新版本。
 
 ## 设置
 
@@ -72,7 +72,7 @@ Folia 自带的显示模式不画注音。打开这个选项后，使用那些�
 | --- | --- |
 | `playback.control` | 点击某一行歌词时跳到那一句 |
 | `ui.stage` | 注册显示模式和舞台图层 |
-| `folium.internals`（`folia: ">=0.7.12 <=0.7.17"`） | 读取当前歌曲和歌词状态（`stores.playback`、`stores.lyricSettings`），把解析出的注音歌词交给宿主的歌词状态；读取当前显示模式和“关键字着色”开关（`stores.visualizerSettings`），用来决定注音字幕条是否出现、歌词里的情绪词要不要上色 |
+| `folium.internals`（`folia: ">=0.7.12 <=0.7.18"`） | 读取当前歌曲和歌词状态（`stores.playback`、`stores.lyricSettings`），把解析出的注音歌词交给宿主的歌词状态；读取当前显示模式和“关键字着色”开关（`stores.visualizerSettings`），用来决定注音字幕条是否出现、歌词里的情绪词要不要上色 |
 
 模组会做的事：
 

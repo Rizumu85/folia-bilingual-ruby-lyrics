@@ -328,7 +328,7 @@ const captionShadow = theme => seeThrough()
 // its display modes) the look of the caption they sit next to: opaque, the caption's shadow, and
 // no blurred plate behind them. Folia offers mods no styling hook for these rows, so the rules
 // go by the markers its subtitle layer happens to carry (data-subtitle-track and the layout
-// around it, the same from 0.7.12 to 0.7.17). If a later Folia changes them the rules simply stop
+// around it, the same from 0.7.12 to 0.7.18). If a later Folia changes them the rules simply stop
 // matching and its subtitles look as they always did.
 function hostSubtitleCss(theme) {
   const shadow = captionShadow(theme);
@@ -1423,7 +1423,7 @@ const keepHostData = (lines,hostLines) => {
   });
 };
 const hasRuby = lines => lines?.some(line => line.words?.some(word => word.ruby?.length || word.syllables?.some(unit => unit.ruby?.length)));
-// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.17).
+// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.18).
 const hostSource = (record,priority) => {
   if (record?.lyricsSource) return record.lyricsSource;
   // 0.7.15+: a song the user marked as instrumental shows no lyrics

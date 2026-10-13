@@ -36,7 +36,7 @@ const keepHostData = (lines,hostLines) => {
   });
 };
 const hasRuby = lines => lines?.some(line => line.words?.some(word => word.ruby?.length || word.syllables?.some(unit => unit.ruby?.length)));
-// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.17).
+// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.18).
 const hostSource = (record,priority) => {
   if (record?.lyricsSource) return record.lyricsSource;
   // 0.7.15+: a song the user marked as instrumental shows no lyrics

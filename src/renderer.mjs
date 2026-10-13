@@ -159,7 +159,7 @@ const captionShadow = theme => seeThrough()
 // its display modes) the look of the caption they sit next to: opaque, the caption's shadow, and
 // no blurred plate behind them. Folia offers mods no styling hook for these rows, so the rules
 // go by the markers its subtitle layer happens to carry (data-subtitle-track and the layout
-// around it, the same from 0.7.12 to 0.7.17). If a later Folia changes them the rules simply stop
+// around it, the same from 0.7.12 to 0.7.18). If a later Folia changes them the rules simply stop
 // matching and its subtitles look as they always did.
 export function hostSubtitleCss(theme) {
   const shadow = captionShadow(theme);

@@ -297,6 +297,25 @@ test('a song that comes back is read again, and a file that cannot be read is lo
   integration.dispose();
 });
 
+test('during an automix blend the length of the track being left is not used to pick the file of the incoming one', async () => {
+  const host = fakeHost();
+  const lengths = [];
+  const integration = createIntegration(host.folium, { readEmbedded: async () => [{ text: RUBY_LRC }], findRecords: async (song, seconds) => { lengths.push(seconds); return [{ filePath: 'D:/music/test.mp3' }]; } });
+  const lines = [{ fullText: '雨が歌う', startTime: 1, endTime: 3, words: [] }];
+  host.play({ ...LOCAL, id: '-1', title: '前の歌' });  // still the player's song
+  host.transform(LOCAL, lines);                        // the incoming track asks
+  await settle();
+  host.play(LOCAL);
+  host.transform({ ...LOCAL, id: '-2', title: '次' }, lines);  // not playing either
+  await settle();
+  const later = { ...LOCAL, id: '-3', title: '今' };
+  host.play(later);
+  host.transform(later, lines);                        // the player's own song: its length is used
+  await settle();
+  assert.deepEqual(lengths, [0, 0, 200]);
+  integration.dispose();
+});
+
 test('on a Folia older than 0.7.22 the mod says what it needs', () => {
   const host = fakeHost({ minor: 6 });
   assert.throws(() => activate(host.folium), /Folium 1\.7 \/ Folia 0\.7\.22/);

@@ -67,10 +67,14 @@ export function createIntegration(folium, {readEmbedded = record => readLocalEmb
   const load = song => {
     const key=keyOf(song);
     const job=(async () => {
-      const seconds=folium.playback?.getState?.()?.duration || 0;
+      // The length helps tell apart files with the same title, artists and album, but only when it
+      // is this song's: during an automix blend the incoming track is asked for while the one it
+      // leaves is still the player's song.
+      const playing=folium.playback?.getState?.();
+      const seconds=keyOf(playing?.song)===key ? playing.duration || 0 : 0;
       const readAll = async records => {
         const found=[];
-        for (const record of records.slice(0,3)) {
+        for (const record of records.slice(0,8)) {
           for (const source of await readEmbedded(record)) {
             // Ordinary embedded lyrics are already Folia's.
             if (!/@Ruby\d*\s*=/.test(source.text)) continue;

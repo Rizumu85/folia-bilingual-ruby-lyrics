@@ -40,7 +40,7 @@ function readCatalogue() {
   });
 }
 
-/** The local files a song (as mods see it) may be, best first; usually one. */
+/** The local files a song (as mods see it) may be, the likeliest first; usually one. */
 export async function findLocalRecords(song, seconds = 0, fresh = false) {
   if (song?.source !== 'local' || !song.title || typeof indexedDB === 'undefined') return [];
   if (!catalogue || fresh) catalogue = await readCatalogue();
@@ -50,10 +50,8 @@ export async function findLocalRecords(song, seconds = 0, fresh = false) {
   const narrow = (list, keep) => { const kept = list.filter(keep); return kept.length ? kept : list; };
   found = narrow(found, item => item.artists.includes(song.artist || ''));
   if (song.album) found = narrow(found, item => item.albums.includes(song.album));
-  if (found.length > 1 && seconds > 0) {
-    const best = Math.min(...found.map(item => Math.abs(item.seconds - seconds)));
-    found = found.filter(item => Math.abs(item.seconds - seconds) <= best + 1);
-  }
+  // closest length first; none is dropped, since which file it is shows only in its lyrics
+  if (found.length > 1 && seconds > 0) found = [...found].sort((a, b) => Math.abs(a.seconds - seconds) - Math.abs(b.seconds - seconds));
   return found;
 }
 

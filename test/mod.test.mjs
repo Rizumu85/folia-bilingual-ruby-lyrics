@@ -235,11 +235,13 @@ test('lines from the file keep what Folia worked out for its own copy: chorus ef
     { fullText: '雨が歌う', startTime: 1, endTime: 3, words: [{ text: '雨が歌う', startTime: 1, endTime: 3 }], translation: '雨在歌唱', isChorus: true, chorusEffect: 'beams', songPart: 'chorus', renderHints: { rawDuration: 2 }, autoWordSegments: ['雨', 'が', '歌う'] },
     { fullText: '風が止む', startTime: 5, endTime: 7, words: [], wordSegments: ['風が', '止まる'], autoWordSegments: ['風', 'が', '止まる'] },
   ];
+  // lyrics already on the player when the mod starts are run through the hook again
+  assert.equal(host.refreshes(), 1);
   host.play(LOCAL);
   // the first time a song comes by, its file is read; once read, Folia is asked to run the hook again
   assert.equal(host.transform(LOCAL, base), base);
   await settle();
-  assert.equal(host.refreshes(), 1);
+  assert.equal(host.refreshes(), 2);
   const [first, second] = host.transform(LOCAL, base);
   assert.deepEqual([first.isChorus, first.chorusEffect, first.songPart, first.translation], [true, 'beams', 'chorus', '雨在歌唱']);
   // the timing and the readings are the file's, and stale render hints are not carried over
@@ -249,7 +251,7 @@ test('lines from the file keep what Folia worked out for its own copy: chorus ef
   assert.equal(integration.get().embedded, true);
   // when the mod stops, Folia runs the hook again without it and its own lyrics come back
   integration.dispose();
-  assert.equal(host.refreshes(), 2);
+  assert.equal(host.refreshes(), 3);
   assert.equal(host.transform(LOCAL, base), base);
 });
 

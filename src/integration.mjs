@@ -131,6 +131,10 @@ export function createIntegration(folium, {readEmbedded = record => readLocalEmb
     event.lines=withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),event.lines)),event.lines));
     state={song:event.song,embedded:true,error:null,ready:true};
   });
+  // Lyrics already on the player when the mod starts (Folia restores the last song before it
+  // loads its mods, and a mod can be switched on mid-song) went past the hook before it was there:
+  // have Folia run it again for them.
+  try {folium.lyrics.refresh();} catch { /* nothing on the player yet */ }
   return {
     get:()=>({...state}),
     dispose() {

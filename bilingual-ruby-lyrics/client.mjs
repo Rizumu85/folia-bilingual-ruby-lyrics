@@ -1514,17 +1514,25 @@ function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(r
   const load = song => {
     const key=keyOf(song);
     const job=(async () => {
-      const found=[];
-      for (const record of (await findRecords(song,folium.playback?.getState?.()?.duration || 0)).slice(0,3)) {
-        for (const source of await readEmbedded(record)) {
-          // Ordinary embedded lyrics are already Folia's.
-          if (!/@Ruby\d*\s*=/.test(source.text)) continue;
-          try {
-            const lyrics=parseFaKara(source.text);
-            if (hasRuby(lyrics?.lines)) {found.push(lyrics);break;}
-          } catch { /* a malformed extension: the host's normal lyrics stay */ }
+      const seconds=folium.playback?.getState?.()?.duration || 0;
+      const readAll = async records => {
+        const found=[];
+        for (const record of records.slice(0,3)) {
+          for (const source of await readEmbedded(record)) {
+            // Ordinary embedded lyrics are already Folia's.
+            if (!/@Ruby\d*\s*=/.test(source.text)) continue;
+            try {
+              const lyrics=parseFaKara(source.text);
+              if (hasRuby(lyrics?.lines)) {found.push(lyrics);break;}
+            } catch { /* a malformed extension: the host's normal lyrics stay */ }
+          }
         }
-      }
+        return found;
+      };
+      let found;
+      try {found=await readAll(await findRecords(song,seconds));}
+      // the file may have moved since Folia's table was read: look it up there again, once
+      catch {found=await readAll(await findRecords(song,seconds,true));}
       return found.length ? found : null;
     })();
     remember(key,job);
@@ -1546,6 +1554,13 @@ function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(r
       }
     });
   };
+  // A song that comes back is read again: its file may have been written in between (new readings,
+  // corrected timing). Only the song on now is kept (during an automix blend the incoming track is
+  // asked for before it is on, and is on by the time this fires).
+  const stopSong=folium.events.on('playback.songChanged', event => {
+    const now=keyOf(event.song);
+    for (const key of [...known.keys()]) if (key!==now) known.delete(key);
+  });
   const stop=folium.events.on('lyrics.transform', event => {
     const key=keyOf(event.song);
     if (!key || !event.lines?.length || hasRuby(event.lines)) return;
@@ -1562,7 +1577,7 @@ function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(r
   return {
     get:()=>({...state}),
     dispose() {
-      disposed=true;stop?.();known.clear();
+      disposed=true;stop?.();stopSong?.();known.clear();
       // Folia runs the hook again without this handler: its own lyrics come back.
       try {folium.lyrics.refresh();} catch { /* the host is going away */ }
     },

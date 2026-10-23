@@ -272,12 +272,37 @@ test('lyrics Folia took from somewhere else, songs that are not local files and 
   integration.dispose();
 });
 
+test('a song that comes back is read again, and a file that cannot be read is looked up afresh once', async () => {
+  const host = fakeHost();
+  let reads = 0, lookups = 0;
+  const integration = createIntegration(host.folium, {
+    readEmbedded: async () => { reads++; if (reads === 1) throw new Error('moved'); return [{ text: RUBY_LRC }]; },
+    findRecords: async (song, seconds, fresh) => { lookups++; return [{ filePath: fresh ? 'D:/music/new/test.mp3' : 'D:/music/test.mp3' }]; },
+  });
+  const lines = [{ fullText: '雨が歌う', startTime: 1, endTime: 3, words: [] }, { fullText: '風が止む', startTime: 5, endTime: 7, words: [] }];
+  host.play(LOCAL);
+  host.transform(LOCAL, lines);
+  await settle();
+  // the first read failed, the second lookup found the file where it is now
+  assert.deepEqual([lookups, reads, host.transform(LOCAL, lines)[0].words[0].syllables[0].ruby[0].text], [2, 2, 'あめ']);
+  // another song plays, then this one again: its file is read again
+  const other = { ...LOCAL, id: '-6789', title: '風' };
+  for (const handler of host.handlers['playback.songChanged'] || []) handler({ song: other });
+  host.play(other);
+  for (const handler of host.handlers['playback.songChanged'] || []) handler({ song: LOCAL });
+  host.play(LOCAL);
+  host.transform(LOCAL, lines);
+  await settle();
+  assert.equal(reads, 3);
+  integration.dispose();
+});
+
 test('on a Folia older than 0.7.22 the mod says what it needs', () => {
   const host = fakeHost({ minor: 6 });
   assert.throws(() => activate(host.folium), /Folium 1\.7 \/ Folia 0\.7\.22/);
 });
 
-test('a failed read of the embedded lyrics is reported once and not retried for the same song', async () => {
+test('a failed read of the embedded lyrics is reported once and not retried for the same song (beyond one fresh lookup)', async () => {
   const host = fakeHost();
   let reads = 0;
   const integration = createIntegration(host.folium, { readEmbedded: async () => { reads++; throw new Error('无法读取'); }, findRecords: fileOf() });
@@ -287,7 +312,7 @@ test('a failed read of the embedded lyrics is reported once and not retried for 
   await settle();
   host.transform(LOCAL, lines);
   await settle();
-  assert.equal(reads, 1);
+  assert.equal(reads, 2);
   assert.equal(host.logs.length, 1);
   assert.equal(host.toasts.length, 1);
   integration.dispose();

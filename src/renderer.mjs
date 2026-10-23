@@ -22,7 +22,8 @@ const CSS = `
   .reading .current.chorus { --word:color-mix(in srgb, var(--reading-primary) 52%, var(--reading-accent)); --near:.32em; --far:.64em; }
   .reading .current .plain { color:var(--word); }
   .reading .current .timed { color:transparent; -webkit-text-fill-color:transparent; -webkit-background-clip:text; background-clip:text;
-    background-image:linear-gradient(90deg, var(--word) calc(var(--p,0%) + (var(--pn,0) - 1) * var(--soft)), var(--base) calc(var(--p,0%) + var(--pn,0) * var(--soft))); }
+    --ink:color-mix(in srgb, var(--word) var(--ink-from,100%), var(--reading-primary));
+    background-image:linear-gradient(90deg, var(--ink) 0%, color-mix(in srgb, var(--ink) var(--ink-dim,100%), var(--base)) calc(var(--p,0%) + (var(--pn,0) - 1) * var(--soft)), var(--base) calc(var(--p,0%) + var(--pn,0) * var(--soft))); }
   .reading .current .timed.glow { filter:drop-shadow(0 0 var(--near) color-mix(in srgb, var(--word) var(--g1,0%), transparent)) drop-shadow(0 0 var(--far) color-mix(in srgb, var(--word) var(--g2,0%), transparent)); }
   .reading .near { font-size:calc(var(--size) * .72); line-height:1.3; }
   .reading .near.passed { color:var(--word); opacity:.52; filter:blur(1.1px); }
@@ -442,6 +443,13 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
         unit.filled = filled;
         unit.element.style.setProperty('--pn', filled.toFixed(3));
         unit.element.style.setProperty('--p', (filled * 100).toFixed(1) + '%');
+        // as the host's: while a unit is being swept, its lit part turns from the lyric colour to
+        // its own as it goes, and is a little dimmer towards its end (.92 at two thirds of the way,
+        // .72 at the end); once sung it is its own colour throughout
+        const swept = now && settings.step !== true;
+        const dim = !swept ? 1 : filled < .68 ? 1 - .08 * filled / .68 : .92 - .2 * (filled - .68) / .32;
+        unit.element.style.setProperty('--ink-from', ((swept ? filled : 1) * 100).toFixed(1) + '%');
+        unit.element.style.setProperty('--ink-dim', (dim * 100).toFixed(1) + '%');
       }
       // the glow, in steps of 1/40 so that the filter is not rebuilt for changes nobody can see
       const glow = unit.main && !ctx.staticMode ? Math.round(glowAt(time, unit.start, unit.end, currentEnd) * 40) / 40 : 0;

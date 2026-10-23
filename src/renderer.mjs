@@ -159,7 +159,7 @@ const captionShadow = theme => seeThrough()
 // its display modes) the look of the caption they sit next to: opaque, the caption's shadow, and
 // no blurred plate behind them. Folia offers mods no styling hook for these rows, so the rules
 // go by the markers its subtitle layer happens to carry (data-subtitle-track and the layout
-// around it, the same from 0.7.12 to 0.7.19). If a later Folia changes them the rules simply stop
+// around it, the same from 0.7.12 to 0.7.22). If a later Folia changes them the rules simply stop
 // matching and its subtitles look as they always did.
 export function hostSubtitleCss(theme) {
   const shadow = captionShadow(theme);
@@ -204,8 +204,8 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     if (selected >= 0 && time > lines[selected].endTime + 1) return -1;
     return selected;
   };
-  // Keyword colours follow the same switch as Folia's poster lyrics (its Monet setting).
-  const keywordsOn = () => folium.internals?.stores?.visualizerSettings?.getState?.().monetTuning?.keywordColoringEnabled !== false;
+  // Keyword colours: those of the theme, as Folia's poster lyrics use them. (The switch Folia keeps
+  // for them in its Monet settings is not something a mod can read.)
   const paint = () => {
     const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
     const shown = hostRows(display);
@@ -263,9 +263,9 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
       }
       root.style.bottom = Math.round(bottom) + 'px';
     }
-    const time = ctx.currentTime.get(), index = indexAt(time);
+    const time = ctx.lyricTime.get(), index = indexAt(time);
     // keyword colours are for the display mode and the poster; the caption has the theme's three colours only
-    const keywords = !strip && keywordsOn() && theme.wordColors?.length ? theme.wordColors : null;
+    const keywords = !strip && theme.wordColors?.length ? theme.wordColors : null;
     const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
@@ -345,10 +345,8 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     }
   };
   paint();
-  const unsubscribeClock = ctx.currentTime.on('change', paint);
-  const unsubscribeContext = ctx.subscribe(paint);
-  const unsubscribeParams = params.subscribe(paint);
-  // the keyword switch lives in a host store; repaint when it is flipped
-  const unsubscribeStore = folium.internals?.stores?.visualizerSettings?.subscribe?.(paint);
-  return () => { unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); unsubscribeStore?.(); root.remove(); style.remove(); };
+  const unsubscribeClock = ctx.onLyricTime(paint);
+  const unsubscribeContext = ctx.onChange(paint);
+  const unsubscribeParams = params.onChange(paint);
+  return () => { unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); root.remove(); style.remove(); };
 }

@@ -1,13 +1,60 @@
 import { embeddedVersions } from './id3.mjs';
 import { readEmbeddedLyrics, AUDIO_FILE } from './tags.mjs';
 
-// Folia 0.7.12: the current carrier stores a UUID; its file path is in local_music.
-// This read-only lookup deliberately never upgrades, creates or writes the host database.
-export async function readLocalSong(song) {
-  if (song?.localData?.filePath) return song.localData;
-  const id = song?.localRef?.songId;
-  if (!id || typeof indexedDB === 'undefined') return null;
-  return readHostRecord('local_music', id);
+// Folia keeps a local song's file in its own database (table local_music). The song a mod is given
+// carries the title, artists and album the file is shown with, but not the file, so the record is
+// looked up by those; the song's length breaks a tie. Only a few fields of each record are kept,
+// and the database is only read: never upgraded, created or written.
+let catalogue = null;  // title -> [{ filePath, artists, albums, seconds }]
+const artistsOf = record => [
+  (record.importedMetadata?.artistNames || []).join(' / '),
+  (record.onlineMetadata?.artists || []).map(artist => artist?.name).filter(Boolean).join(' / '),
+];
+const albumsOf = record => [record.importedMetadata?.albumName, record.onlineMetadata?.album?.name].filter(Boolean);
+
+function readCatalogue() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('KineticPlayerDB');
+    request.onupgradeneeded = () => { request.transaction.abort(); };
+    request.onerror = () => reject(new Error('无法读取 Folia 本地歌曲资料'));
+    request.onsuccess = () => {
+      const db = request.result, titles = new Map();
+      db.onversionchange = () => db.close();
+      if (!db.objectStoreNames.contains('local_music')) { db.close(); resolve(titles); return; }
+      const transaction = db.transaction('local_music', 'readonly');
+      const cursor = transaction.objectStore('local_music').openCursor();
+      cursor.onsuccess = () => {
+        const at = cursor.result;
+        if (!at) return;
+        const record = at.value;
+        if (record?.title && record.filePath) {
+          if (!titles.has(record.title)) titles.set(record.title, []);
+          titles.get(record.title).push({ filePath: record.filePath, artists: artistsOf(record), albums: albumsOf(record), seconds: (Number(record.duration) || 0) / 1000 });
+        }
+        at.continue();
+      };
+      cursor.onerror = () => reject(new Error('无法读取 Folia 本地歌曲资料'));
+      transaction.oncomplete = () => { db.close(); resolve(titles); };
+      transaction.onabort = () => { db.close(); reject(new Error('本地歌曲读取被中断')); };
+    };
+  });
+}
+
+/** The local files a song (as mods see it) may be, best first; usually one. */
+export async function findLocalRecords(song, seconds = 0, fresh = false) {
+  if (song?.source !== 'local' || !song.title || typeof indexedDB === 'undefined') return [];
+  if (!catalogue || fresh) catalogue = await readCatalogue();
+  let found = catalogue.get(song.title) || [];
+  // a song added since the catalogue was read
+  if (!found.length && !fresh) return findLocalRecords(song, seconds, true);
+  const narrow = (list, keep) => { const kept = list.filter(keep); return kept.length ? kept : list; };
+  found = narrow(found, item => item.artists.includes(song.artist || ''));
+  if (song.album) found = narrow(found, item => item.albums.includes(song.album));
+  if (found.length > 1 && seconds > 0) {
+    const best = Math.min(...found.map(item => Math.abs(item.seconds - seconds)));
+    found = found.filter(item => Math.abs(item.seconds - seconds) <= best + 1);
+  }
+  return found;
 }
 
 function readHostRecord(table, key) {
@@ -51,13 +98,4 @@ export async function readLocalEmbedded(record, rpc, getHandles = hostHandles) {
   const file = await (await directory.getFileHandle(fileName)).getFile();
   const read = async (offset, length) => new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
   return embeddedVersions(await readEmbeddedLyrics(read, file.size), fileName);
-}
-
-export function songIdentity(song, record = null) {
-  if (!song) return null;
-  record ||= song.localData;
-  if (isAbsoluteAudioPath(record?.filePath)) return 'local-file:' + record.filePath.replace(/\\/g, '/').normalize('NFC').toLowerCase();
-  if (song.localRef?.songId) return 'local-id:' + song.localRef.songId;
-  const ref = song.sourceRef;
-  return JSON.stringify([ref?.kind || 'online', ref?.providerId || song.providerId || 'netease', String(ref?.mediaId ?? song.id), ref?.variant || '']);
 }

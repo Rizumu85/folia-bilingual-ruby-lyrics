@@ -129,6 +129,24 @@ test('Ruby lyrics are read from the ID3 chunk of a WAV file and the APE tag at t
   assert.deepEqual((await readEmbeddedLyrics(...reader(apeFile))).map(item => item.text), [RUBY_TEXT]);
 });
 
+test('Ruby lyrics are read from the ID3 tag at the end of a DSF file and the ID3 chunk of a DSDIFF file', async () => {
+  const id3 = [...tag([['USLT', uslt('TimeTag-Ruby', RUBY_TEXT)]])];
+  const audio = new Array(64).fill(0x69);  // DSD silence
+  const fmt = [...Buffer.from('fmt '), ...le(52, 8), ...new Array(40).fill(0)];
+  const data = [...Buffer.from('data'), ...le(12 + audio.length, 8), ...audio];
+  const at = 28 + fmt.length + data.length;
+  const dsfFile = [...Buffer.from('DSD '), ...le(28, 8), ...le(at + id3.length, 8), ...le(at, 8), ...fmt, ...data, ...id3];
+  assert.deepEqual((await readEmbeddedLyrics(...reader(dsfFile))).map(item => [item.descriptor, item.text]), [['TimeTag-Ruby', RUBY_TEXT]]);
+  // a DSF without a tag points nowhere
+  const bare = [...Buffer.from('DSD '), ...le(28, 8), ...le(at, 8), ...le(0, 8), ...fmt, ...data];
+  assert.deepEqual(await readEmbeddedLyrics(...reader(bare)), []);
+
+  const chunk = (id, body) => [...Buffer.from(id), ...be(body.length, 8), ...body, ...(body.length & 1 ? [0] : [])];
+  const form = [...Buffer.from('DSD '), ...chunk('FVER', [1, 5, 0, 0]), ...chunk('PROP', [...Buffer.from('SND '), ...chunk('FS  ', be(2822400, 4))]), ...chunk('DSD ', [...audio, 0x69]), ...chunk('ID3 ', id3)];
+  const dffFile = [...Buffer.from('FRM8'), ...be(form.length, 8), ...form];
+  assert.deepEqual((await readEmbeddedLyrics(...reader(dffFile))).map(item => [item.descriptor, item.text]), [['TimeTag-Ruby', RUBY_TEXT]]);
+});
+
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 
 test('the files Folia loads are what the sources build, each in one file', () => {
@@ -156,22 +174,27 @@ test('the built main entry reads the Ruby lyrics out of a file on disk', async (
 });
 
 // just enough of the host for the mod to activate
-function fakeHost({ context = 'main' } = {}) {
-  const registered = {}, logs = [], toasts = [], listeners = new Set();
-  let values = {};
-  const registry = name => ({ register: entry => { (registered[name] ||= []).push(entry); return name === 'settingsSections' ? { params } : () => {}; } });
-  const params = { get: () => ({ primary: 'original', ruby: true, strip: 'off', poster: false, ...values }), set: next => { values = { ...values, ...next }; listeners.forEach(fn => fn()); }, subscribe: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
-  const storeListeners = new Set();
-  let state = { currentSong: null, lyrics: null, transitionDisplay: false, setLyricsState() {}, setCurrentLineIndex() {} };
-  const playback = { getState: () => state, subscribe: fn => { storeListeners.add(fn); return () => storeListeners.delete(fn); }, change(next) { const previous = state; state = { ...state, ...next }; storeListeners.forEach(fn => fn(state, previous)); } };
+function fakeHost({ context = 'main', minor = 7 } = {}) {
+  const registered = {}, logs = [], toasts = [], listeners = new Set(), handlers = {};
+  let values = {}, refreshes = 0, song = null;
+  const registry = name => ({ register: entry => { (registered[name] ||= []).push(entry); return name === 'settingsSections' ? { settings: params } : () => {}; } });
+  const params = { get: () => ({ primary: 'original', ruby: true, strip: 'off', poster: false, ...values }), set: next => { values = { ...values, ...next }; listeners.forEach(fn => fn()); }, onChange: fn => { listeners.add(fn); return () => listeners.delete(fn); } };
   const folium = {
-    host: { folium: { minor: 4 } }, env: { context },
+    host: { folium: { minor } }, env: { context },
     registries: new Proxy({}, { get: (_, name) => registry(name) }),
-    internals: { stores: { playback, lyricSettings: { getState: () => ({}), subscribe: () => () => {} }, visualizerSettings: { getState: () => ({ visualizerMode: 'classic' }), subscribe: () => () => {} } } },
+    events: { on: (type, handler) => { (handlers[type] ||= new Set()).add(handler); return () => handlers[type].delete(handler); } },
+    lyrics: { refresh: () => { refreshes++; } },
+    playback: { getState: () => ({ song, duration: 200 }) },
     log: { error: message => logs.push(message) }, ui: { toast: message => toasts.push(message) },
-    rpc: { call: async () => [] }, playback: {}, theme: {},
+    rpc: { call: async () => [] }, theme: {},
   };
-  return { folium, registered, params, playback, logs, toasts };
+  // What Folia does when lyrics reach the player: run the hook on its lines, keep what comes back.
+  const transform = (eventSong, lines) => {
+    const event = { song: eventSong, lines };
+    for (const handler of handlers['lyrics.transform'] || []) handler(event);
+    return event.lines;
+  };
+  return { folium, registered, params, logs, toasts, transform, play: next => { song = next; }, refreshes: () => refreshes, handlers };
 }
 const settle = () => new Promise(resolve => setTimeout(resolve, 20));
 
@@ -198,81 +221,71 @@ test('poster lyrics and the ruby caption touch nothing until their settings are 
   activate(host.folium);
   const container = new Proxy({}, { get(_, name) { throw new Error('the poster layer touched its container (' + String(name) + ') while switched off'); } });
   const lines = [{ words: [{ syllables: [{ text: '歌', ruby: [{ text: 'うた' }] }] }] }];
-  for (const layer of host.registered.stageLayers) layer.mount(container, { lines, song: null })();
+  for (const layer of host.registered.stageLayers) layer.mount(container, { lines, song: null, onChange: () => () => {} })();
 });
+
+const LOCAL = { id: '-12345', title: '雨', artist: '歌手', album: null, source: 'local', ref: null };
+const RUBY_LRC = ['[00:01:00]雨[00:01:50]が歌う[00:03:00]', '[00:05:00]風[00:05:50]が止む[00:07:00]', '@Offset=0', '@Ruby1=雨,[00:00:00]あめ[00:00:50]', '@Ruby2=風,[00:00:00]かぜ[00:00:50]', ''].join('\n');
+const fileOf = () => async () => [{ filePath: 'D:/music/test.mp3', artists: ['歌手'], albums: [], seconds: 200 }];
 
 test('lines from the file keep what Folia worked out for its own copy: chorus effects, song part', async () => {
   const host = fakeHost();
-  let shown = null;
-  const lrc = ['[00:01:00]雨[00:01:50]が歌う[00:03:00]', '[00:05:00]風[00:05:50]が止む[00:07:00]', '@Offset=0', '@Ruby1=雨,[00:00:00]あめ[00:00:50]', '@Ruby2=風,[00:00:00]かぜ[00:00:50]', ''].join('\n');
-  const integration = createIntegration(host.folium, { readEmbedded: async () => [{ text: lrc }] });
-  const base = { lines: [
-    { fullText: '雨が歌う', startTime: 1, endTime: 3, words: [{ text: '雨が歌う', startTime: 1, endTime: 3 }], translation: '雨在歌唱', isChorus: true, chorusEffect: 'beams', songPart: 'chorus', renderHints: { rawDuration: 2 } },
+  const integration = createIntegration(host.folium, { readEmbedded: async () => [{ text: RUBY_LRC }], findRecords: fileOf() });
+  const base = [
+    { fullText: '雨が歌う', startTime: 1, endTime: 3, words: [{ text: '雨が歌う', startTime: 1, endTime: 3 }], translation: '雨在歌唱', isChorus: true, chorusEffect: 'beams', songPart: 'chorus', renderHints: { rawDuration: 2 }, autoWordSegments: ['雨', 'が', '歌う'] },
     { fullText: '風が止む', startTime: 5, endTime: 7, words: [], wordSegments: ['風が', '止まる'], autoWordSegments: ['風', 'が', '止まる'] },
-  ] };
-  base.lines[0].autoWordSegments = ['雨', 'が', '歌う'];
-  host.playback.change({ currentSong: { id: 'local', localData: { filePath: 'D:/music/test.mp3' } }, lyrics: base, setLyricsState: value => { shown = value; } });
+  ];
+  host.play(LOCAL);
+  // the first time a song comes by, its file is read; once read, Folia is asked to run the hook again
+  assert.equal(host.transform(LOCAL, base), base);
   await settle();
-  const [first, second] = shown.lines;
+  assert.equal(host.refreshes(), 1);
+  const [first, second] = host.transform(LOCAL, base);
   assert.deepEqual([first.isChorus, first.chorusEffect, first.songPart, first.translation], [true, 'beams', 'chorus', '雨在歌唱']);
   // the timing and the readings are the file's, and stale render hints are not carried over
   assert.deepEqual([first.words.length, first.words[0].syllables[0].ruby[0].text, 'renderHints' in first], [2, 'あめ', false]);
-  // word boundaries saved for a different text are dropped, Folia's own ones too; those that fit stay
-  assert.equal('wordSegments' in second, false);
-  assert.equal('autoWordSegments' in second, false);
-  assert.deepEqual(first.autoWordSegments, ['雨', 'が', '歌う']);
+  // word boundaries made for a different text are dropped, Folia's own ones too; those that fit stay
+  assert.deepEqual(['wordSegments' in second, 'autoWordSegments' in second, first.autoWordSegments], [false, false, ['雨', 'が', '歌う']]);
+  assert.equal(integration.get().embedded, true);
+  // when the mod stops, Folia runs the hook again without it and its own lyrics come back
+  integration.dispose();
+  assert.equal(host.refreshes(), 2);
+  assert.equal(host.transform(LOCAL, base), base);
+});
+
+test('lyrics Folia took from somewhere else, songs that are not local files and songs without lyrics are left alone', async () => {
+  const host = fakeHost();
+  let reads = 0;
+  const integration = createIntegration(host.folium, { readEmbedded: async () => { reads++; return [{ text: RUBY_LRC }]; }, findRecords: fileOf() });
+  // online lyrics of the same song: other times
+  const online = [{ fullText: '雨が歌う', startTime: 1.6, endTime: 3, words: [] }, { fullText: '風が止む', startTime: 5.7, endTime: 7, words: [] }];
+  host.play(LOCAL);
+  host.transform(LOCAL, online);
+  await settle();
+  assert.equal(host.transform(LOCAL, online), online);
+  // an instrumental (no lines), and an online song, are not even looked up
+  const none = [];
+  assert.equal(host.transform(LOCAL, none), none);
+  const stream = { ...LOCAL, source: 'netease', id: '1' };
+  assert.equal(host.transform(stream, online), online);
+  assert.equal(reads, 1);
   integration.dispose();
 });
 
-test('lyrics Folia rebuilds from ours (its own word boundaries, 0.7.19) are still ours: its original comes back when the mod stops', async () => {
-  const host = fakeHost();
-  const written = [];
-  const lrc = ['[00:01:00]雨[00:01:50]が歌う[00:03:00]', '@Offset=0', '@Ruby1=雨,[00:00:00]あめ[00:00:50]', ''].join('\n');
-  let reads = 0;
-  const integration = createIntegration(host.folium, { readEmbedded: async () => { reads++; return [{ text: lrc }]; } });
-  const base = { lines: [{ fullText: '雨が歌う', startTime: 1, endTime: 3, words: [{ text: '雨が歌う', startTime: 1, endTime: 3 }] }] };
-  const setLyricsState = value => { written.push(value); host.playback.change({ lyrics: value }); };
-  host.playback.change({ currentSong: { id: 'local', localData: { filePath: 'D:/music/test.mp3' } }, lyrics: base, setLyricsState });
-  await settle();
-  const ours = written.at(-1);
-  assert.equal(ours.lines[0].words[0].syllables[0].ruby[0].text, 'あめ');
-  // the host adds its word boundaries to every line and puts the result in the store
-  const rebuilt = { ...ours, lines: ours.lines.map(line => ({ ...line, autoWordSegments: ['雨', 'が', '歌う'] })) };
-  host.playback.change({ lyrics: rebuilt });
-  await settle();
-  // nothing is read or written again, and the readings are still showing
-  assert.deepEqual([reads, written.length, host.playback.getState().lyrics === rebuilt], [1, 1, true]);
-  integration.dispose();
-  assert.equal(written.at(-1), base);
-});
-
-test('on a Folia whose internals have changed, reading the file is switched off with one notice and nothing throws', async () => {
-  const host = fakeHost();
-  // a later host: the playback store no longer has the setter the mod writes through
-  const state = host.playback.getState();
-  delete state.setLyricsState;
-  let reads = 0;
-  const integration = createIntegration(host.folium, { readEmbedded: async () => { reads++; return []; } });
-  host.playback.change({ currentSong: { id: 'local', localData: { filePath: 'D:/music/test.mp3' } }, lyrics: { lines: [] } });
-  await settle();
-  assert.deepEqual([reads, host.logs.length, host.toasts.length, integration.get().embedded], [0, 1, 1, false]);
-  integration.dispose();
-  // and the whole mod still starts on such a host
-  const other = fakeHost();
-  delete other.playback.getState().setLyricsState;
-  const dispose = activate(other.folium);
-  assert.equal(other.registered.visualizers.length, 1);
-  dispose();
+test('on a Folia older than 0.7.22 the mod says what it needs', () => {
+  const host = fakeHost({ minor: 6 });
+  assert.throws(() => activate(host.folium), /Folium 1\.7 \/ Folia 0\.7\.22/);
 });
 
 test('a failed read of the embedded lyrics is reported once and not retried for the same song', async () => {
   const host = fakeHost();
   let reads = 0;
-  const integration = createIntegration(host.folium, { readEmbedded: async () => { reads++; throw new Error('无法读取'); } });
-  const song = { id: 'local', localData: { filePath: 'D:/music/test.mp3' } };
-  host.playback.change({ currentSong: song, lyrics: { lines: [] } });
+  const integration = createIntegration(host.folium, { readEmbedded: async () => { reads++; throw new Error('无法读取'); }, findRecords: fileOf() });
+  const lines = [{ fullText: '雨が歌う', startTime: 1, endTime: 3, words: [] }];
+  host.play(LOCAL);
+  host.transform(LOCAL, lines);
   await settle();
-  host.playback.change({ lyrics: { lines: [] } });
+  host.transform(LOCAL, lines);
   await settle();
   assert.equal(reads, 1);
   assert.equal(host.logs.length, 1);

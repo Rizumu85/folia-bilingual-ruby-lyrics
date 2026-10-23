@@ -1,5 +1,5 @@
 import { pairBilingual } from './lyrics.mjs';
-import { readLocalSong, songIdentity, readLocalEmbedded } from './local-song.mjs';
+import { findLocalRecords, readLocalEmbedded } from './local-song.mjs';
 import { parseFaKara } from './fa-kara.mjs';
 import { withRomanization } from './romaji.mjs';
 
@@ -37,134 +37,87 @@ const keepHostData = (lines,hostLines) => {
     return {...kept,...line};
   });
 };
-const sameWords = (a,b) => a?.lines?.length===b?.lines?.length && a.lines.length>0 && a.lines.every((line,index) => line.words && line.words===b.lines[index].words);
 const hasRuby = lines => lines?.some(line => line.words?.some(word => word.ruby?.length || word.syllables?.some(unit => unit.ruby?.length)));
-// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.19).
-const hostSource = (record,priority) => {
-  if (record?.lyricsSource) return record.lyricsSource;
-  // 0.7.15+: a song the user marked as instrumental shows no lyrics
-  if (record?.markedPureMusic) return 'online';
-  if (priority==='online' && record?.matchedLyrics) return 'online';
-  if (record?.hasLocalLyrics && record.localLyricsContent) return 'local';
-  if (record?.hasEmbeddedLyrics && record.embeddedLyricsContent) return 'embedded';
-  if (record?.matchedLyrics) return 'online';
-  return null;
+// Whether Folia is showing the lyrics embedded in the file (the plain version written beside the
+// readings) rather than lyrics from somewhere else: online ones, a lyric file next to the song, a
+// version the user picked, or none at all for a song marked instrumental. Most of its lines then
+// have a line of ours at the same time with the same text.
+const fromTheFile = (ours,host) => {
+  let same=0;
+  for (const line of host) if (ours.some(item => Math.abs(item.startTime-line.startTime)<=.05 && item.fullText===line.fullText)) same++;
+  return same>=Math.max(1,Math.ceil(.6*Math.min(host.length,ours.length)));
 };
+const KEEP = 16;  // songs whose readings are remembered
 
-// Folia owns source selection and the offset clock. Supplement its default embedded
-// LRC with the extra Ruby USLT item; never load former imports or plugin lead settings.
-// The parts of Folia's internals this file relies on. Internals carry no compatibility promise
-// and the declared host range reaches past the versions checked by hand, so they are looked at
-// before anything is done with them.
-export function internalsFit(folium) {
-  try {
-    const store=folium.internals?.stores?.playback, state=store?.getState?.();
-    return typeof store?.subscribe==='function' && !!state && 'currentSong' in state && 'lyrics' in state
-      && typeof state.setLyricsState==='function' && typeof state.setCurrentLineIndex==='function';
-  } catch { return false; }
-}
-
-export function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(record,folium.rpc)} = {}) {
-  if (!internalsFit(folium)) {
-    // A later Folia has changed what is used here: the readings in the file are left alone, with
-    // one notice, and the rest of the mod goes on working on the lyrics Folia has by itself.
-    const message='这个版本的 Folia 改了模组用到的内部接口，暂时读不了文件里的注音歌词；显示模式和其他功能不受影响。请更新模组。';
-    try {folium.log?.error?.(message);folium.ui?.toast?.(message,{type:'info',durationMs:6000});} catch { /* a notice is all this is */ }
-    return {get:()=>({song:null,embedded:false,error:message,ready:true}),dispose() {}};
-  }
-  const store = folium.internals.stores.playback, embedded = new Map();
-  const lyricSettings=folium.internals.stores.lyricSettings;
-  let disposed=false, ownWrite=false, queued=false, revision=0, carrier=null, base=null, applied=null;
-  let state={song:null,embedded:false,error:null,ready:false}, reported=null;
-  const reconcile = async () => {
-    queued=false;
-    if (disposed) return;
-    const snapshot=store.getState();
-    // Folia may rebuild the lyrics it holds without anything having changed for us: 0.7.19 adds
-    // its own word boundaries to every line once its segmenter has loaded, as it always did with
-    // the user's saved ones. Lines copied from ours still carry our word arrays; such lyrics are
-    // still ours, and what Folia had before we stepped in stays the thing to give back.
-    if (applied && snapshot.lyrics!==applied && songIdentity(snapshot.currentSong)===carrier && sameWords(snapshot.lyrics,applied)) {
-      applied=snapshot.lyrics;
-      return;
-    }
-    const ticket=++revision, song=snapshot.currentSong, identity=songIdentity(song);
-    if (!song) {carrier=null;base=null;applied=null;state={song:null,embedded:false,error:null,ready:false};return;}
-    const changed=identity!==carrier;
-    if (changed) {carrier=identity;base=snapshot.lyrics;applied=null;embedded.clear();}
-    else if (snapshot.lyrics!==applied) base=snapshot.lyrics;
-    const current = () => !disposed && ticket===revision && songIdentity(store.getState().currentSong)===identity;
-    state={song,embedded:false,error:null,ready:false};
-    try {
-      const record=await readLocalSong(song);
-      if (!current()) return;
-      let rich=null;
-      // Honor both explicit and automatic source choices, and host lyrics already containing ruby.
-      const source=hostSource(record,lyricSettings?.getState().localLyricsPriority);
-      if (!hasRuby(base?.lines) && (!source || source==='embedded') && record) {
-        if (!embedded.has(identity)) {
-          let parsed=null;
-          for (const source of await readEmbedded(record)) {
-            if (!current()) return;
-            // Ordinary embedded lyrics are already handled by Folia.
-            if (!/@Ruby\d*\s*=/.test(source.text)) continue;
-            try {
-              const lyrics=parseFaKara(source.text);
-              if (hasRuby(lyrics?.lines)) {parsed=lyrics;break;}
-            } catch { /* Keep the host's normal lyrics if the extension is malformed. */ }
-          }
-          if (!current()) return;
-          embedded.set(identity,parsed);
+// The readings come in through Folia's own lyrics hook: when the lyrics of a song reach the player,
+// `lyrics.transform` hands its lines here and the lines with readings go back in their place. The
+// hook is synchronous and reading the file is not, so the first time a song comes by its file is
+// read, and once it has been, `folium.lyrics.refresh()` has Folia run the hook again. Folia owns
+// the choice of lyric source and the offset clock: the lines are only replaced while Folia shows
+// the lyrics embedded in the file, which the readings are a richer version of.
+export function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(record,folium.rpc), findRecords = findLocalRecords} = {}) {
+  const known = new Map();  // song key -> [parsed lyrics, one per matching file] | null | a pending read
+  let disposed=false, asked=null, reported=null;
+  let state={song:null,embedded:false,error:null,ready:false};
+  const keyOf = song => song?.source==='local' && song.title ? JSON.stringify([song.id,song.title,song.artist,song.album]) : null;
+  const remember = (key,value) => {
+    known.delete(key); known.set(key,value);
+    while (known.size>KEEP) known.delete(known.keys().next().value);
+  };
+  const load = song => {
+    const key=keyOf(song);
+    const job=(async () => {
+      const found=[];
+      for (const record of (await findRecords(song,folium.playback?.getState?.()?.duration || 0)).slice(0,3)) {
+        for (const source of await readEmbedded(record)) {
+          // Ordinary embedded lyrics are already Folia's.
+          if (!/@Ruby\d*\s*=/.test(source.text)) continue;
+          try {
+            const lyrics=parseFaKara(source.text);
+            if (hasRuby(lyrics?.lines)) {found.push(lyrics);break;}
+          } catch { /* a malformed extension: the host's normal lyrics stay */ }
         }
-        rich=embedded.get(identity);
       }
-      if (!current() || store.getState().transitionDisplay) return;
-      if (!rich) {
-        // No embedded Ruby: the host's lyrics object stays exactly as Folia built it.
-        if (applied && store.getState().lyrics===applied) {
-          ownWrite=true;
-          try {store.getState().setLyricsState(base);store.getState().setCurrentLineIndex(-1);}
-          finally {ownWrite=false;}
-        }
-        applied=null;
-        state={song,embedded:false,error:null,ready:true};
-        return;
-      }
-      // Folia's own modes show this line when its subtitle setting asks for romanization.
-      const lines=withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),base?.lines)),base?.lines));
-      applied={...(base || {}),lines,isWordByWord:rich.isWordByWord ?? base?.isWordByWord ?? false};
-      ownWrite=true;
-      try {store.getState().setLyricsState(applied);store.getState().setCurrentLineIndex(-1);}
-      finally {ownWrite=false;}
-      state={song,embedded:true,error:null,ready:true};
-    } catch (error) {
-      if (!current()) return;
-      state={song,embedded:false,error:error.message,ready:true};
+      return found.length ? found : null;
+    })();
+    remember(key,job);
+    job.then(found => {
+      if (disposed || known.get(key)!==job) return;
+      remember(key,found);
+      if (!found) state={song,embedded:false,error:null,ready:true};
+      const shown=keyOf(folium.playback?.getState?.()?.song);
+      if (found && (shown===key || asked===key)) folium.lyrics.refresh();
+    }, error => {
+      if (disposed || known.get(key)!==job) return;
       // Keep the host's own lyrics, do not read the file again for this song, and say why once.
-      embedded.set(identity,null);
-      if (reported!==identity) {
-        reported=identity;
+      remember(key,null);
+      state={song,embedded:false,error:error.message,ready:true};
+      if (reported!==key) {
+        reported=key;
         folium.log.error('内嵌注音歌词读取失败：'+error.message);
         folium.ui?.toast?.('内嵌注音歌词读取失败：'+error.message,{type:'info',durationMs:4000});
       }
-    }
+    });
   };
-  const schedule = () => {
-    if (disposed || queued) return;
-    queued=true; queueMicrotask(()=>void reconcile());
-  };
-  const unsubscribe=store.subscribe((next,previous)=>{
-    if (!ownWrite && (next.currentSong!==previous.currentSong || next.lyrics!==previous.lyrics || next.transitionDisplay!==previous.transitionDisplay)) schedule();
+  const stop=folium.events.on('lyrics.transform', event => {
+    const key=keyOf(event.song);
+    if (!key || !event.lines?.length || hasRuby(event.lines)) return;
+    asked=key;
+    const entry=known.get(key);
+    if (entry===undefined) {load(event.song);return;}
+    if (!Array.isArray(entry)) return;  // no readings in the file, or still reading it
+    const rich=entry.find(lyrics => fromTheFile(lyrics.lines,event.lines));
+    if (!rich) {state={song:event.song,embedded:false,error:null,ready:true};return;}
+    // Folia's own modes show the romanization line when its subtitle setting asks for it.
+    event.lines=withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),event.lines)),event.lines));
+    state={song:event.song,embedded:true,error:null,ready:true};
   });
-  const unsubscribeSettings=lyricSettings?.subscribe((next,previous)=>{
-    if(next.localLyricsPriority!==previous.localLyricsPriority) schedule();
-  });
-  schedule();
   return {
     get:()=>({...state}),
     dispose() {
-      disposed=true;revision++;unsubscribe();unsubscribeSettings?.();embedded.clear();
-      if (store.getState().lyrics===applied) store.getState().setLyricsState(base);
+      disposed=true;stop?.();known.clear();
+      // Folia runs the hook again without this handler: its own lyrics come back.
+      try {folium.lyrics.refresh();} catch { /* the host is going away */ }
     },
   };
 }

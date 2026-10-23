@@ -54,6 +54,6 @@ export function mountPanel(container, params) {
   for (const button of root.querySelectorAll('[data-switch]')) button.addEventListener('click', () => params.set({ [button.dataset.switch]: !isOn(params.get(), button.dataset.switch) }));
   container.append(style, root);
   refresh();
-  const unsubscribe = params.subscribe(refresh);
+  const unsubscribe = params.onChange(refresh);
   return () => { unsubscribe(); root.remove(); style.remove(); };
 }

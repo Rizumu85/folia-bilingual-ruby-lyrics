@@ -328,7 +328,7 @@ const captionShadow = theme => seeThrough()
 // its display modes) the look of the caption they sit next to: opaque, the caption's shadow, and
 // no blurred plate behind them. Folia offers mods no styling hook for these rows, so the rules
 // go by the markers its subtitle layer happens to carry (data-subtitle-track and the layout
-// around it, the same from 0.7.12 to 0.7.19). If a later Folia changes them the rules simply stop
+// around it, the same from 0.7.12 to 0.7.22). If a later Folia changes them the rules simply stop
 // matching and its subtitles look as they always did.
 function hostSubtitleCss(theme) {
   const shadow = captionShadow(theme);
@@ -373,8 +373,8 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     if (selected >= 0 && time > lines[selected].endTime + 1) return -1;
     return selected;
   };
-  // Keyword colours follow the same switch as Folia's poster lyrics (its Monet setting).
-  const keywordsOn = () => folium.internals?.stores?.visualizerSettings?.getState?.().monetTuning?.keywordColoringEnabled !== false;
+  // Keyword colours: those of the theme, as Folia's poster lyrics use them. (The switch Folia keeps
+  // for them in its Monet settings is not something a mod can read.)
   const paint = () => {
     const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
     const shown = hostRows(display);
@@ -432,9 +432,9 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
       }
       root.style.bottom = Math.round(bottom) + 'px';
     }
-    const time = ctx.currentTime.get(), index = indexAt(time);
+    const time = ctx.lyricTime.get(), index = indexAt(time);
     // keyword colours are for the display mode and the poster; the caption has the theme's three colours only
-    const keywords = !strip && keywordsOn() && theme.wordColors?.length ? theme.wordColors : null;
+    const keywords = !strip && theme.wordColors?.length ? theme.wordColors : null;
     const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords]);
     if (previousIndex !== index || optionsKey !== key) {
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
@@ -514,12 +514,10 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     }
   };
   paint();
-  const unsubscribeClock = ctx.currentTime.on('change', paint);
-  const unsubscribeContext = ctx.subscribe(paint);
-  const unsubscribeParams = params.subscribe(paint);
-  // the keyword switch lives in a host store; repaint when it is flipped
-  const unsubscribeStore = folium.internals?.stores?.visualizerSettings?.subscribe?.(paint);
-  return () => { unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); unsubscribeStore?.(); root.remove(); style.remove(); };
+  const unsubscribeClock = ctx.onLyricTime(paint);
+  const unsubscribeContext = ctx.onChange(paint);
+  const unsubscribeParams = params.onChange(paint);
+  return () => { unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); root.remove(); style.remove(); };
 }
 return { hostSubtitleCss, mountReading };
 })();
@@ -680,7 +678,7 @@ function mountPanel(container, params) {
   for (const button of root.querySelectorAll('[data-switch]')) button.addEventListener('click', () => params.set({ [button.dataset.switch]: !isOn(params.get(), button.dataset.switch) }));
   container.append(style, root);
   refresh();
-  const unsubscribe = params.subscribe(refresh);
+  const unsubscribe = params.onChange(refresh);
   return () => { unsubscribe(); root.remove(); style.remove(); };
 }
 return { mountPanel };
@@ -792,7 +790,8 @@ const __tags = (() => {
 // Reads embedded lyrics out of any audio file Folia plays, by the kind of tag found in the file
 // rather than by its extension:
 //
-//   ID3v2            MP3, AAC, TTA; inside a chunk in WAV and AIFF      USLT frames
+//   ID3v2            MP3, AAC, TTA; inside a chunk in WAV, AIFF and     USLT frames
+//                    DSDIFF (.dff); at the end of a DSF file
 //   Vorbis comments  FLAC, Ogg Vorbis, Opus                             LYRICS, RUBY_LYRICS
 //   MP4 atoms        M4A, ALAC                                          ©lyr, ----:com.apple.iTunes:RUBY_LYRICS
 //   APEv2            APE, WavPack, TTA                                  Lyrics, RUBY_LYRICS
@@ -803,8 +802,8 @@ const __tags = (() => {
 const { id3Header, parseId3 } = __id3;
 
 const RUBY_TAG = 'RUBY_LYRICS';
-/** The extensions Folia 0.7.13 accepts as local music. */
-const AUDIO_FILE = /\.(mp3|flac|m4a|wav|ogg|opus|aac|alac|ape|wv|tta|wma|aif|aiff|caf)$/i;
+/** The extensions Folia 0.7.22 accepts as local music. */
+const AUDIO_FILE = /\.(mp3|flac|m4a|wav|ogg|opus|aac|alac|ape|wv|tta|wma|aif|aiff|caf|dsf|dff)$/i;
 const LYRIC_TAGS = new Set(['LYRICS', 'UNSYNCEDLYRICS', 'UNSYNCED LYRICS', 'WM/LYRICS', RUBY_TAG]);
 const MAX_BYTES = 16 * 1024 * 1024;
 const ascii = bytes => String.fromCharCode(...bytes);
@@ -901,6 +900,27 @@ async function chunked(read, position, size, number) {
     const length = number(header.subarray(4, 8));
     if (ascii(header.subarray(0, 4)).toUpperCase() === 'ID3 ') return (await id3At(read, position + 8)).lyrics;
     position += 8 + length + (length & 1);
+  }
+  return [];
+}
+
+// DSF: the 28-byte "DSD " chunk ends with where the file's ID3v2 tag starts (0: none), little-endian.
+async function dsf(read, position) {
+  const header = await read(position, 28);
+  if (header.length < 28) return [];
+  const pointer = little(header.subarray(20, 28));
+  return pointer ? (await id3At(read, pointer)).lyrics : [];
+}
+
+// DSDIFF (.dff): a FRM8 form of big-endian chunks with 64-bit sizes; the tag is an "ID3 " chunk.
+async function dff(read, position, size) {
+  position += 16;
+  for (let guard = 0; guard < 4096 && position + 12 <= size; guard++) {
+    const header = await read(position, 12);
+    if (header.length < 12) break;
+    const length = big(header.subarray(4, 12));
+    if (ascii(header.subarray(0, 4)).toUpperCase() === 'ID3 ') return (await id3At(read, position + 12)).lyrics;
+    position += 12 + length + (length & 1);
   }
   return [];
 }
@@ -1045,6 +1065,8 @@ async function readEmbeddedLyrics(read, size) {
   else if (magic === 'OggS') found.push(...await ogg(read, start, size));
   else if (magic === 'RIFF') found.push(...await chunked(read, start, size, little));
   else if (magic === 'FORM') found.push(...await chunked(read, start, size, big));
+  else if (magic === 'DSD ') found.push(...await dsf(read, start));
+  else if (magic === 'FRM8') found.push(...await dff(read, start, size));
   else if (ascii(head.subarray(4, 8)) === 'ftyp') found.push(...await mp4(read, start, size));
   else if (head.length >= 16 && same(head, 0, ASF_HEADER)) found.push(...await asf(read, start));
   else if (magic === 'MAC ' || magic === 'wvpk' || magic === 'TTA1') found.push(...await ape(read, size));
@@ -1058,13 +1080,60 @@ const __local_song = (() => {
 const { embeddedVersions } = __id3;
 const { readEmbeddedLyrics, AUDIO_FILE } = __tags;
 
-// Folia 0.7.12: the current carrier stores a UUID; its file path is in local_music.
-// This read-only lookup deliberately never upgrades, creates or writes the host database.
-async function readLocalSong(song) {
-  if (song?.localData?.filePath) return song.localData;
-  const id = song?.localRef?.songId;
-  if (!id || typeof indexedDB === 'undefined') return null;
-  return readHostRecord('local_music', id);
+// Folia keeps a local song's file in its own database (table local_music). The song a mod is given
+// carries the title, artists and album the file is shown with, but not the file, so the record is
+// looked up by those; the song's length breaks a tie. Only a few fields of each record are kept,
+// and the database is only read: never upgraded, created or written.
+let catalogue = null;  // title -> [{ filePath, artists, albums, seconds }]
+const artistsOf = record => [
+  (record.importedMetadata?.artistNames || []).join(' / '),
+  (record.onlineMetadata?.artists || []).map(artist => artist?.name).filter(Boolean).join(' / '),
+];
+const albumsOf = record => [record.importedMetadata?.albumName, record.onlineMetadata?.album?.name].filter(Boolean);
+
+function readCatalogue() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open('KineticPlayerDB');
+    request.onupgradeneeded = () => { request.transaction.abort(); };
+    request.onerror = () => reject(new Error('无法读取 Folia 本地歌曲资料'));
+    request.onsuccess = () => {
+      const db = request.result, titles = new Map();
+      db.onversionchange = () => db.close();
+      if (!db.objectStoreNames.contains('local_music')) { db.close(); resolve(titles); return; }
+      const transaction = db.transaction('local_music', 'readonly');
+      const cursor = transaction.objectStore('local_music').openCursor();
+      cursor.onsuccess = () => {
+        const at = cursor.result;
+        if (!at) return;
+        const record = at.value;
+        if (record?.title && record.filePath) {
+          if (!titles.has(record.title)) titles.set(record.title, []);
+          titles.get(record.title).push({ filePath: record.filePath, artists: artistsOf(record), albums: albumsOf(record), seconds: (Number(record.duration) || 0) / 1000 });
+        }
+        at.continue();
+      };
+      cursor.onerror = () => reject(new Error('无法读取 Folia 本地歌曲资料'));
+      transaction.oncomplete = () => { db.close(); resolve(titles); };
+      transaction.onabort = () => { db.close(); reject(new Error('本地歌曲读取被中断')); };
+    };
+  });
+}
+
+/** The local files a song (as mods see it) may be, best first; usually one. */
+async function findLocalRecords(song, seconds = 0, fresh = false) {
+  if (song?.source !== 'local' || !song.title || typeof indexedDB === 'undefined') return [];
+  if (!catalogue || fresh) catalogue = await readCatalogue();
+  let found = catalogue.get(song.title) || [];
+  // a song added since the catalogue was read
+  if (!found.length && !fresh) return findLocalRecords(song, seconds, true);
+  const narrow = (list, keep) => { const kept = list.filter(keep); return kept.length ? kept : list; };
+  found = narrow(found, item => item.artists.includes(song.artist || ''));
+  if (song.album) found = narrow(found, item => item.albums.includes(song.album));
+  if (found.length > 1 && seconds > 0) {
+    const best = Math.min(...found.map(item => Math.abs(item.seconds - seconds)));
+    found = found.filter(item => Math.abs(item.seconds - seconds) <= best + 1);
+  }
+  return found;
 }
 
 function readHostRecord(table, key) {
@@ -1109,16 +1178,7 @@ async function readLocalEmbedded(record, rpc, getHandles = hostHandles) {
   const read = async (offset, length) => new Uint8Array(await file.slice(offset, offset + length).arrayBuffer());
   return embeddedVersions(await readEmbeddedLyrics(read, file.size), fileName);
 }
-
-function songIdentity(song, record = null) {
-  if (!song) return null;
-  record ||= song.localData;
-  if (isAbsoluteAudioPath(record?.filePath)) return 'local-file:' + record.filePath.replace(/\\/g, '/').normalize('NFC').toLowerCase();
-  if (song.localRef?.songId) return 'local-id:' + song.localRef.songId;
-  const ref = song.sourceRef;
-  return JSON.stringify([ref?.kind || 'online', ref?.providerId || song.providerId || 'netease', String(ref?.mediaId ?? song.id), ref?.variant || '']);
-}
-return { readLocalSong, isAbsoluteAudioPath, readLocalEmbedded, songIdentity };
+return { findLocalRecords, isAbsoluteAudioPath, readLocalEmbedded };
 })();
 
 // ---- fa-kara.mjs
@@ -1386,7 +1446,7 @@ return { romanizeLine, withRomanization };
 // ---- integration.mjs
 const __integration = (() => {
 const { pairBilingual } = __lyrics;
-const { readLocalSong, songIdentity, readLocalEmbedded } = __local_song;
+const { findLocalRecords, readLocalEmbedded } = __local_song;
 const { parseFaKara } = __fa_kara;
 const { withRomanization } = __romaji;
 
@@ -1424,138 +1484,91 @@ const keepHostData = (lines,hostLines) => {
     return {...kept,...line};
   });
 };
-const sameWords = (a,b) => a?.lines?.length===b?.lines?.length && a.lines.length>0 && a.lines.every((line,index) => line.words && line.words===b.lines[index].words);
 const hasRuby = lines => lines?.some(line => line.words?.some(word => word.ruby?.length || word.syllables?.some(unit => unit.ruby?.length)));
-// Same source precedence as Folia's selectLocalSongLyricsSource (0.7.12 to 0.7.19).
-const hostSource = (record,priority) => {
-  if (record?.lyricsSource) return record.lyricsSource;
-  // 0.7.15+: a song the user marked as instrumental shows no lyrics
-  if (record?.markedPureMusic) return 'online';
-  if (priority==='online' && record?.matchedLyrics) return 'online';
-  if (record?.hasLocalLyrics && record.localLyricsContent) return 'local';
-  if (record?.hasEmbeddedLyrics && record.embeddedLyricsContent) return 'embedded';
-  if (record?.matchedLyrics) return 'online';
-  return null;
+// Whether Folia is showing the lyrics embedded in the file (the plain version written beside the
+// readings) rather than lyrics from somewhere else: online ones, a lyric file next to the song, a
+// version the user picked, or none at all for a song marked instrumental. Most of its lines then
+// have a line of ours at the same time with the same text.
+const fromTheFile = (ours,host) => {
+  let same=0;
+  for (const line of host) if (ours.some(item => Math.abs(item.startTime-line.startTime)<=.05 && item.fullText===line.fullText)) same++;
+  return same>=Math.max(1,Math.ceil(.6*Math.min(host.length,ours.length)));
 };
+const KEEP = 16;  // songs whose readings are remembered
 
-// Folia owns source selection and the offset clock. Supplement its default embedded
-// LRC with the extra Ruby USLT item; never load former imports or plugin lead settings.
-// The parts of Folia's internals this file relies on. Internals carry no compatibility promise
-// and the declared host range reaches past the versions checked by hand, so they are looked at
-// before anything is done with them.
-function internalsFit(folium) {
-  try {
-    const store=folium.internals?.stores?.playback, state=store?.getState?.();
-    return typeof store?.subscribe==='function' && !!state && 'currentSong' in state && 'lyrics' in state
-      && typeof state.setLyricsState==='function' && typeof state.setCurrentLineIndex==='function';
-  } catch { return false; }
-}
-
-function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(record,folium.rpc)} = {}) {
-  if (!internalsFit(folium)) {
-    // A later Folia has changed what is used here: the readings in the file are left alone, with
-    // one notice, and the rest of the mod goes on working on the lyrics Folia has by itself.
-    const message='这个版本的 Folia 改了模组用到的内部接口，暂时读不了文件里的注音歌词；显示模式和其他功能不受影响。请更新模组。';
-    try {folium.log?.error?.(message);folium.ui?.toast?.(message,{type:'info',durationMs:6000});} catch { /* a notice is all this is */ }
-    return {get:()=>({song:null,embedded:false,error:message,ready:true}),dispose() {}};
-  }
-  const store = folium.internals.stores.playback, embedded = new Map();
-  const lyricSettings=folium.internals.stores.lyricSettings;
-  let disposed=false, ownWrite=false, queued=false, revision=0, carrier=null, base=null, applied=null;
-  let state={song:null,embedded:false,error:null,ready:false}, reported=null;
-  const reconcile = async () => {
-    queued=false;
-    if (disposed) return;
-    const snapshot=store.getState();
-    // Folia may rebuild the lyrics it holds without anything having changed for us: 0.7.19 adds
-    // its own word boundaries to every line once its segmenter has loaded, as it always did with
-    // the user's saved ones. Lines copied from ours still carry our word arrays; such lyrics are
-    // still ours, and what Folia had before we stepped in stays the thing to give back.
-    if (applied && snapshot.lyrics!==applied && songIdentity(snapshot.currentSong)===carrier && sameWords(snapshot.lyrics,applied)) {
-      applied=snapshot.lyrics;
-      return;
-    }
-    const ticket=++revision, song=snapshot.currentSong, identity=songIdentity(song);
-    if (!song) {carrier=null;base=null;applied=null;state={song:null,embedded:false,error:null,ready:false};return;}
-    const changed=identity!==carrier;
-    if (changed) {carrier=identity;base=snapshot.lyrics;applied=null;embedded.clear();}
-    else if (snapshot.lyrics!==applied) base=snapshot.lyrics;
-    const current = () => !disposed && ticket===revision && songIdentity(store.getState().currentSong)===identity;
-    state={song,embedded:false,error:null,ready:false};
-    try {
-      const record=await readLocalSong(song);
-      if (!current()) return;
-      let rich=null;
-      // Honor both explicit and automatic source choices, and host lyrics already containing ruby.
-      const source=hostSource(record,lyricSettings?.getState().localLyricsPriority);
-      if (!hasRuby(base?.lines) && (!source || source==='embedded') && record) {
-        if (!embedded.has(identity)) {
-          let parsed=null;
-          for (const source of await readEmbedded(record)) {
-            if (!current()) return;
-            // Ordinary embedded lyrics are already handled by Folia.
-            if (!/@Ruby\d*\s*=/.test(source.text)) continue;
-            try {
-              const lyrics=parseFaKara(source.text);
-              if (hasRuby(lyrics?.lines)) {parsed=lyrics;break;}
-            } catch { /* Keep the host's normal lyrics if the extension is malformed. */ }
-          }
-          if (!current()) return;
-          embedded.set(identity,parsed);
+// The readings come in through Folia's own lyrics hook: when the lyrics of a song reach the player,
+// `lyrics.transform` hands its lines here and the lines with readings go back in their place. The
+// hook is synchronous and reading the file is not, so the first time a song comes by its file is
+// read, and once it has been, `folium.lyrics.refresh()` has Folia run the hook again. Folia owns
+// the choice of lyric source and the offset clock: the lines are only replaced while Folia shows
+// the lyrics embedded in the file, which the readings are a richer version of.
+function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(record,folium.rpc), findRecords = findLocalRecords} = {}) {
+  const known = new Map();  // song key -> [parsed lyrics, one per matching file] | null | a pending read
+  let disposed=false, asked=null, reported=null;
+  let state={song:null,embedded:false,error:null,ready:false};
+  const keyOf = song => song?.source==='local' && song.title ? JSON.stringify([song.id,song.title,song.artist,song.album]) : null;
+  const remember = (key,value) => {
+    known.delete(key); known.set(key,value);
+    while (known.size>KEEP) known.delete(known.keys().next().value);
+  };
+  const load = song => {
+    const key=keyOf(song);
+    const job=(async () => {
+      const found=[];
+      for (const record of (await findRecords(song,folium.playback?.getState?.()?.duration || 0)).slice(0,3)) {
+        for (const source of await readEmbedded(record)) {
+          // Ordinary embedded lyrics are already Folia's.
+          if (!/@Ruby\d*\s*=/.test(source.text)) continue;
+          try {
+            const lyrics=parseFaKara(source.text);
+            if (hasRuby(lyrics?.lines)) {found.push(lyrics);break;}
+          } catch { /* a malformed extension: the host's normal lyrics stay */ }
         }
-        rich=embedded.get(identity);
       }
-      if (!current() || store.getState().transitionDisplay) return;
-      if (!rich) {
-        // No embedded Ruby: the host's lyrics object stays exactly as Folia built it.
-        if (applied && store.getState().lyrics===applied) {
-          ownWrite=true;
-          try {store.getState().setLyricsState(base);store.getState().setCurrentLineIndex(-1);}
-          finally {ownWrite=false;}
-        }
-        applied=null;
-        state={song,embedded:false,error:null,ready:true};
-        return;
-      }
-      // Folia's own modes show this line when its subtitle setting asks for romanization.
-      const lines=withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),base?.lines)),base?.lines));
-      applied={...(base || {}),lines,isWordByWord:rich.isWordByWord ?? base?.isWordByWord ?? false};
-      ownWrite=true;
-      try {store.getState().setLyricsState(applied);store.getState().setCurrentLineIndex(-1);}
-      finally {ownWrite=false;}
-      state={song,embedded:true,error:null,ready:true};
-    } catch (error) {
-      if (!current()) return;
-      state={song,embedded:false,error:error.message,ready:true};
+      return found.length ? found : null;
+    })();
+    remember(key,job);
+    job.then(found => {
+      if (disposed || known.get(key)!==job) return;
+      remember(key,found);
+      if (!found) state={song,embedded:false,error:null,ready:true};
+      const shown=keyOf(folium.playback?.getState?.()?.song);
+      if (found && (shown===key || asked===key)) folium.lyrics.refresh();
+    }, error => {
+      if (disposed || known.get(key)!==job) return;
       // Keep the host's own lyrics, do not read the file again for this song, and say why once.
-      embedded.set(identity,null);
-      if (reported!==identity) {
-        reported=identity;
+      remember(key,null);
+      state={song,embedded:false,error:error.message,ready:true};
+      if (reported!==key) {
+        reported=key;
         folium.log.error('内嵌注音歌词读取失败：'+error.message);
         folium.ui?.toast?.('内嵌注音歌词读取失败：'+error.message,{type:'info',durationMs:4000});
       }
-    }
+    });
   };
-  const schedule = () => {
-    if (disposed || queued) return;
-    queued=true; queueMicrotask(()=>void reconcile());
-  };
-  const unsubscribe=store.subscribe((next,previous)=>{
-    if (!ownWrite && (next.currentSong!==previous.currentSong || next.lyrics!==previous.lyrics || next.transitionDisplay!==previous.transitionDisplay)) schedule();
+  const stop=folium.events.on('lyrics.transform', event => {
+    const key=keyOf(event.song);
+    if (!key || !event.lines?.length || hasRuby(event.lines)) return;
+    asked=key;
+    const entry=known.get(key);
+    if (entry===undefined) {load(event.song);return;}
+    if (!Array.isArray(entry)) return;  // no readings in the file, or still reading it
+    const rich=entry.find(lyrics => fromTheFile(lyrics.lines,event.lines));
+    if (!rich) {state={song:event.song,embedded:false,error:null,ready:true};return;}
+    // Folia's own modes show the romanization line when its subtitle setting asks for it.
+    event.lines=withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),event.lines)),event.lines));
+    state={song:event.song,embedded:true,error:null,ready:true};
   });
-  const unsubscribeSettings=lyricSettings?.subscribe((next,previous)=>{
-    if(next.localLyricsPriority!==previous.localLyricsPriority) schedule();
-  });
-  schedule();
   return {
     get:()=>({...state}),
     dispose() {
-      disposed=true;revision++;unsubscribe();unsubscribeSettings?.();embedded.clear();
-      if (store.getState().lyrics===applied) store.getState().setLyricsState(base);
+      disposed=true;stop?.();known.clear();
+      // Folia runs the hook again without this handler: its own lyrics come back.
+      try {folium.lyrics.refresh();} catch { /* the host is going away */ }
     },
   };
 }
-return { internalsFit, createIntegration };
+return { createIntegration };
 })();
 
 // ---- client.mjs
@@ -1568,7 +1581,7 @@ const { createIntegration } = __integration;
 const label = (zh, en) => ({ 'zh-CN': zh, en: en || zh });
 
 function activate(folium) {
-  if (folium.host.folium.minor < 4) throw new Error('本模组需要 Folium 1.4 / Folia 0.7.12');
+  if (folium.host.folium.minor < 7) throw new Error('本模组需要 Folium 1.7 / Folia 0.7.22 或更新的版本');
 
   const section = folium.registries.settingsSections.register({
     id: 'display',
@@ -1614,19 +1627,29 @@ function activate(folium) {
       },
     ],
   });
-  const params = section.params;
+  const params = section.settings;
 
+  // The caption below is for Folia's own display modes: while this mode is on the player it already
+  // shows the readings, and the caption stays away. The mode says when it is on screen.
+  let ownModeShown = 0;
+  const ownModeListeners = new Set();
+  const ownMode = delta => { ownModeShown += delta; for (const listener of ownModeListeners) listener(); };
   folium.registries.visualizers.register({
     id: 'reading',
     label: label('双语 · 注音歌词', 'Bilingual & ruby lyrics'),
     order: 510,
     hostLayers: { background: true, subtitles: false },
-    mount: (container, ctx) => mountReading(container, ctx, folium, params),
+    mount: (container, ctx) => {
+      const dispose = mountReading(container, ctx, folium, params);
+      if (ctx.isPreview || ctx.staticMode) return dispose;
+      ownMode(1);
+      return () => { dispose(); ownMode(-1); };
+    },
   });
 
   if (folium.env.context !== 'main') return undefined;
 
-  // Reads the Ruby lyrics embedded in the playing MP3 and hands them to the host's lyric state.
+  // Reads the Ruby lyrics embedded in the playing file and hands them to Folia through its lyrics hook.
   const integration = createIntegration(folium);
 
   folium.registries.stageLayers.register({
@@ -1642,13 +1665,11 @@ function activate(folium) {
         else if (!wanted && dispose) { dispose(); dispose = null; }
       };
       sync();
-      const unsubscribe = params.subscribe(sync);
+      const unsubscribe = params.onChange(sync);
       return () => { unsubscribe(); dispose?.(); dispose = null; };
     },
   });
   // The display modes built into Folia do not draw readings; this caption does, on top of them.
-  const OWN_MODE = 'mod:bilingual-ruby-lyrics:reading';
-  const modeStore = folium.internals?.stores?.visualizerSettings;
   const hasReadings = lines => lines.some(line => line.words?.some(word => word.syllables?.some(unit => unit.ruby?.length)));
   folium.registries.stageLayers.register({
     id: 'ruby-caption',
@@ -1667,20 +1688,21 @@ function activate(folium) {
         if (wanted) sheet = folium.registries.styles?.register({ id: 'subtitles', css: wanted }) || null;
       };
       restyle();
-      const stops = [params.subscribe(restyle), ctx.subscribe?.(restyle)], timer = setInterval(restyle, 1000);
+      const stops = [params.onChange(restyle), ctx.onChange(restyle)], timer = setInterval(restyle, 1000);
       const stopRestyle = () => { clearInterval(timer); for (const stop of stops) stop?.(); sheet?.unregister?.(); sheet = null; css = ''; };
       if (!hasReadings(ctx.lines)) return stopRestyle;
       let dispose = null, shown = null;
       const sync = () => {
         const position = params.get().strip;
-        const wanted = (position === 'top' || position === 'bottom') && modeStore?.getState?.()?.visualizerMode !== OWN_MODE ? position : null;
+        const wanted = (position === 'top' || position === 'bottom') && !ownModeShown ? position : null;
         if (wanted === shown) return;
         dispose?.(); dispose = null; shown = wanted;
         if (wanted) dispose = mountReading(container, ctx, folium, params, { strip: wanted });
       };
       sync();
-      const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe?.(sync);
-      return () => { stopRestyle(); unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
+      const unsubscribe = params.onChange(sync);
+      ownModeListeners.add(sync);
+      return () => { stopRestyle(); unsubscribe(); ownModeListeners.delete(sync); dispose?.(); dispose = null; };
     },
   });
   folium.registries.playerPanelTabs.register({

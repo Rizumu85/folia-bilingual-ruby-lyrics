@@ -6,7 +6,7 @@ import { createIntegration } from './integration.mjs';
 const label = (zh, en) => ({ 'zh-CN': zh, en: en || zh });
 
 export default function activate(folium) {
-  if (folium.host.folium.minor < 4) throw new Error('本模组需要 Folium 1.4 / Folia 0.7.12');
+  if (folium.host.folium.minor < 7) throw new Error('本模组需要 Folium 1.7 / Folia 0.7.22 或更新的版本');
 
   const section = folium.registries.settingsSections.register({
     id: 'display',
@@ -52,19 +52,29 @@ export default function activate(folium) {
       },
     ],
   });
-  const params = section.params;
+  const params = section.settings;
 
+  // The caption below is for Folia's own display modes: while this mode is on the player it already
+  // shows the readings, and the caption stays away. The mode says when it is on screen.
+  let ownModeShown = 0;
+  const ownModeListeners = new Set();
+  const ownMode = delta => { ownModeShown += delta; for (const listener of ownModeListeners) listener(); };
   folium.registries.visualizers.register({
     id: 'reading',
     label: label('双语 · 注音歌词', 'Bilingual & ruby lyrics'),
     order: 510,
     hostLayers: { background: true, subtitles: false },
-    mount: (container, ctx) => mountReading(container, ctx, folium, params),
+    mount: (container, ctx) => {
+      const dispose = mountReading(container, ctx, folium, params);
+      if (ctx.isPreview || ctx.staticMode) return dispose;
+      ownMode(1);
+      return () => { dispose(); ownMode(-1); };
+    },
   });
 
   if (folium.env.context !== 'main') return undefined;
 
-  // Reads the Ruby lyrics embedded in the playing MP3 and hands them to the host's lyric state.
+  // Reads the Ruby lyrics embedded in the playing file and hands them to Folia through its lyrics hook.
   const integration = createIntegration(folium);
 
   folium.registries.stageLayers.register({
@@ -80,13 +90,11 @@ export default function activate(folium) {
         else if (!wanted && dispose) { dispose(); dispose = null; }
       };
       sync();
-      const unsubscribe = params.subscribe(sync);
+      const unsubscribe = params.onChange(sync);
       return () => { unsubscribe(); dispose?.(); dispose = null; };
     },
   });
   // The display modes built into Folia do not draw readings; this caption does, on top of them.
-  const OWN_MODE = 'mod:bilingual-ruby-lyrics:reading';
-  const modeStore = folium.internals?.stores?.visualizerSettings;
   const hasReadings = lines => lines.some(line => line.words?.some(word => word.syllables?.some(unit => unit.ruby?.length)));
   folium.registries.stageLayers.register({
     id: 'ruby-caption',
@@ -105,20 +113,21 @@ export default function activate(folium) {
         if (wanted) sheet = folium.registries.styles?.register({ id: 'subtitles', css: wanted }) || null;
       };
       restyle();
-      const stops = [params.subscribe(restyle), ctx.subscribe?.(restyle)], timer = setInterval(restyle, 1000);
+      const stops = [params.onChange(restyle), ctx.onChange(restyle)], timer = setInterval(restyle, 1000);
       const stopRestyle = () => { clearInterval(timer); for (const stop of stops) stop?.(); sheet?.unregister?.(); sheet = null; css = ''; };
       if (!hasReadings(ctx.lines)) return stopRestyle;
       let dispose = null, shown = null;
       const sync = () => {
         const position = params.get().strip;
-        const wanted = (position === 'top' || position === 'bottom') && modeStore?.getState?.()?.visualizerMode !== OWN_MODE ? position : null;
+        const wanted = (position === 'top' || position === 'bottom') && !ownModeShown ? position : null;
         if (wanted === shown) return;
         dispose?.(); dispose = null; shown = wanted;
         if (wanted) dispose = mountReading(container, ctx, folium, params, { strip: wanted });
       };
       sync();
-      const unsubscribe = params.subscribe(sync), unsubscribeMode = modeStore?.subscribe?.(sync);
-      return () => { stopRestyle(); unsubscribe(); unsubscribeMode?.(); dispose?.(); dispose = null; };
+      const unsubscribe = params.onChange(sync);
+      ownModeListeners.add(sync);
+      return () => { stopRestyle(); unsubscribe(); ownModeListeners.delete(sync); dispose?.(); dispose = null; };
     },
   });
   folium.registries.playerPanelTabs.register({

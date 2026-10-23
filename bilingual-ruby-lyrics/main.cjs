@@ -110,7 +110,8 @@ const __tags = (() => {
 // Reads embedded lyrics out of any audio file Folia plays, by the kind of tag found in the file
 // rather than by its extension:
 //
-//   ID3v2            MP3, AAC, TTA; inside a chunk in WAV and AIFF      USLT frames
+//   ID3v2            MP3, AAC, TTA; inside a chunk in WAV, AIFF and     USLT frames
+//                    DSDIFF (.dff); at the end of a DSF file
 //   Vorbis comments  FLAC, Ogg Vorbis, Opus                             LYRICS, RUBY_LYRICS
 //   MP4 atoms        M4A, ALAC                                          ©lyr, ----:com.apple.iTunes:RUBY_LYRICS
 //   APEv2            APE, WavPack, TTA                                  Lyrics, RUBY_LYRICS
@@ -121,8 +122,8 @@ const __tags = (() => {
 const { id3Header, parseId3 } = __id3;
 
 const RUBY_TAG = 'RUBY_LYRICS';
-/** The extensions Folia 0.7.13 accepts as local music. */
-const AUDIO_FILE = /\.(mp3|flac|m4a|wav|ogg|opus|aac|alac|ape|wv|tta|wma|aif|aiff|caf)$/i;
+/** The extensions Folia 0.7.22 accepts as local music. */
+const AUDIO_FILE = /\.(mp3|flac|m4a|wav|ogg|opus|aac|alac|ape|wv|tta|wma|aif|aiff|caf|dsf|dff)$/i;
 const LYRIC_TAGS = new Set(['LYRICS', 'UNSYNCEDLYRICS', 'UNSYNCED LYRICS', 'WM/LYRICS', RUBY_TAG]);
 const MAX_BYTES = 16 * 1024 * 1024;
 const ascii = bytes => String.fromCharCode(...bytes);
@@ -219,6 +220,27 @@ async function chunked(read, position, size, number) {
     const length = number(header.subarray(4, 8));
     if (ascii(header.subarray(0, 4)).toUpperCase() === 'ID3 ') return (await id3At(read, position + 8)).lyrics;
     position += 8 + length + (length & 1);
+  }
+  return [];
+}
+
+// DSF: the 28-byte "DSD " chunk ends with where the file's ID3v2 tag starts (0: none), little-endian.
+async function dsf(read, position) {
+  const header = await read(position, 28);
+  if (header.length < 28) return [];
+  const pointer = little(header.subarray(20, 28));
+  return pointer ? (await id3At(read, pointer)).lyrics : [];
+}
+
+// DSDIFF (.dff): a FRM8 form of big-endian chunks with 64-bit sizes; the tag is an "ID3 " chunk.
+async function dff(read, position, size) {
+  position += 16;
+  for (let guard = 0; guard < 4096 && position + 12 <= size; guard++) {
+    const header = await read(position, 12);
+    if (header.length < 12) break;
+    const length = big(header.subarray(4, 12));
+    if (ascii(header.subarray(0, 4)).toUpperCase() === 'ID3 ') return (await id3At(read, position + 12)).lyrics;
+    position += 12 + length + (length & 1);
   }
   return [];
 }
@@ -363,6 +385,8 @@ async function readEmbeddedLyrics(read, size) {
   else if (magic === 'OggS') found.push(...await ogg(read, start, size));
   else if (magic === 'RIFF') found.push(...await chunked(read, start, size, little));
   else if (magic === 'FORM') found.push(...await chunked(read, start, size, big));
+  else if (magic === 'DSD ') found.push(...await dsf(read, start));
+  else if (magic === 'FRM8') found.push(...await dff(read, start, size));
   else if (ascii(head.subarray(4, 8)) === 'ftyp') found.push(...await mp4(read, start, size));
   else if (head.length >= 16 && same(head, 0, ASF_HEADER)) found.push(...await asf(read, start));
   else if (magic === 'MAC ' || magic === 'wvpk' || magic === 'TTA1') found.push(...await ape(read, size));

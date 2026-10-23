@@ -4,15 +4,16 @@ import { pairBilingual } from './lyrics.mjs';
 // lyrics with readings sit beside the host's without a seam: each sung unit is filled by a soft
 // sweep, a glow rises and fades behind it, the lines before and after are smaller, dimmed and
 // slightly blurred, a chorus line takes the accent colour, and keywords take the colours the theme
-// gives them. The numbers are the host's (sweep softness, glow radii and envelope, alpha, scale
-// and blur per line), read from its 0.7.17 source; the drawing itself is plain CSS, not the host's
-// GPU renderer.
+// gives them, and a line moves, grows or shrinks and fades as it changes place. The numbers are the
+// host's (sweep softness, glow radii and envelope, alpha, scale and blur per line, the poster's
+// size and margins), checked against its 0.7.22 source; the drawing itself is plain CSS, not the
+// host's GPU renderer.
 // The caption is drawn over the host's other display modes, and over those of other mods. They
 // have nothing in common but the theme's colours, so the caption uses only those, without effects.
 const CSS = `
   :host { container-type:inline-size; }
   .reading { --size:calc(clamp(25px,4.4vw,62px) * var(--scale,1)); --base:color-mix(in srgb, var(--reading-primary) 34%, transparent); --word:color-mix(in srgb, var(--reading-primary) 98%, transparent);
-    height:100%; width:100%; display:flex; flex-direction:column; justify-content:center; gap:max(18px, calc(var(--size) * .49)); padding:clamp(28px,7vw,100px); box-sizing:border-box; overflow:hidden;
+    height:100%; width:100%; position:relative; display:flex; flex-direction:column; justify-content:center; gap:max(18px, calc(var(--size) * .49)); padding:clamp(28px,7vw,100px); box-sizing:border-box; overflow:hidden;
     color:var(--reading-primary); text-align:center; font-weight:var(--weight,600); }
   .reading button { appearance:none; background:transparent; border:0; color:inherit; font:inherit; padding:0; cursor:pointer; width:100%; }
   .reading button:focus-visible { outline:2px solid var(--reading-accent); outline-offset:10px; border-radius:6px; }
@@ -37,11 +38,15 @@ const CSS = `
   .reading .empty { font-size:20px; font-weight:400; color:var(--reading-secondary); }
   @media (prefers-reduced-motion: reduce) { .reading .near, .reading .current .timed.glow { filter:none; } }
 
-  .reading.poster { --size:clamp(24px,7cqw,56px); padding:8px 12px; text-align:left;
+  /* --fit, --pad and --lift are set in paint() from the card's size */
+  .reading.poster { --size:var(--fit,clamp(24px,7cqw,56px)); padding:0 var(--pad,12px) var(--lift,0px); text-align:left;
     -webkit-mask-image:linear-gradient(to bottom, transparent, #000 9%, #000 91%, transparent), linear-gradient(to right, transparent, #000 4%, #000 96%, transparent); -webkit-mask-composite:source-in; mask-composite:intersect; }
   .reading.poster .current { line-height:1.7; }
   .reading.poster .near { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
   .reading.poster .near > div { display:inline; }
+  /* the one row under the line: translation or romanization, half size, at most two rows */
+  .reading.poster .secondary, .reading.poster .romaji { font-size:.5em; font-weight:var(--sub-weight,500); line-height:1.35; margin-top:.3em; letter-spacing:normal;
+    display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 
   /* The caption does not follow the host's subtitle settings: it is always opaque, one size, and
      uses nothing but the theme's colours. Words to come are in the secondary colour, sung words in
@@ -185,11 +190,86 @@ function glowAt(time, start, end, lineEnd) {
 // leave between themselves; it is taken in slightly so that the three lines read as one group.
 const STRIP_GAP = -4;
 
+// The poster's size, as Folia sizes its own poster lyrics: the largest from 64px down to 24px at
+// which a fixed budget fits the card's height (three rows of the line being sung and two of each
+// line beside it at .72, with the gaps between them and the room around, plus two half-size rows
+// under the line when one is shown) and three widths of "国Agyp" fit across it. The budget is
+// fixed so that the size does not change from line to line.
+function fitPoster(doc, width, height, font, weight, subFont, subWeight, withSub) {
+  const pen = doc.createElement('canvas').getContext('2d');
+  if (!pen) return null;
+  const measure = style => {
+    pen.font = style;
+    const m = pen.measureText('国Agyp');
+    return { width: m.width, height: m.actualBoundingBoxAscent + m.actualBoundingBoxDescent };
+  };
+  for (let size = 64; size > 24; size--) {
+    const main = measure(`${weight} ${size}px ${font}`), row = Math.max(size * 1.18, main.height + 2);
+    const sub = withSub ? Math.max(size * .675, measure(`${subWeight} ${size / 2}px ${subFont}`).height + 2) * 2 + size * .3 : 0;
+    if (row * 4.44 + size * 2.18 + sub <= height && main.width * 3 <= width - size * 1.2) return size;
+  }
+  return 24;
+}
+
+// How a line changes place, after Folia's: it glides to its new place and size (the host uses a
+// spring that settles in about half a second, without overshoot), and fades and sharpens or blurs
+// in about a third of a second. A line coming in starts small, clear and blurred a little below or
+// above its place; one going out fades while it moves on.
+const MOVE = { duration: 650, easing: 'cubic-bezier(.22,1,.36,1)' };
+const FADE = { duration: 300, easing: 'cubic-bezier(.32,.72,0,1)' };
+
 // strip: only the line being sung, with its readings, as a caption over another display mode
 export function mountReading(container, ctx, folium, params, { poster = false, strip = null } = {}) {
   const style = document.createElement('style'); style.textContent = CSS;
   const root = document.createElement('div'); root.className = strip ? 'reading strip ' + strip : poster ? 'reading poster' : 'reading';
   container.append(style, root);
+  const view = root.ownerDocument.defaultView;
+  // the poster card's size, kept by an observer so that paint() does not ask for layout each frame
+  let box = null, fitted = '';
+  const resize = poster && typeof view?.ResizeObserver === 'function'
+    ? new view.ResizeObserver(() => { box = { width: root.offsetWidth, height: root.offsetHeight }; paint(); }) : null;
+  resize?.observe(root);
+  // Where the rows are before the lines change, in the layer's own pixels (the poster card is
+  // drawn scaled down), so that they can be moved from there.
+  const snapshot = () => {
+    const origin = root.getBoundingClientRect(), k = origin.width / (root.offsetWidth || 1) || 1, rows = new Map();
+    for (const row of root.children) {
+      if (!row.dataset?.line) continue;
+      const r = row.getBoundingClientRect(), cs = view.getComputedStyle(row);
+      rows.set(row.dataset.line, { row, x: (r.left - origin.left) / k, y: (r.top - origin.top) / k, width: r.width / k,
+        font: parseFloat(cs.fontSize) || 1, opacity: cs.opacity, filter: cs.filter, passed: row.classList.contains('passed') });
+    }
+    return { rows, k };
+  };
+  const settle = ({ rows, k }) => {
+    const origin = root.getBoundingClientRect(), center = !poster, seen = new Set();
+    for (const row of root.children) {
+      const line = row.dataset?.line;
+      if (!line) continue;
+      const r = row.getBoundingClientRect(), cs = view.getComputedStyle(row), old = rows.get(line);
+      row.style.transformOrigin = center ? 'center top' : 'left top';
+      if (old) {
+        seen.add(line);
+        const x = (r.left - origin.left) / k, y = (r.top - origin.top) / k, width = r.width / k;
+        const dx = center ? old.x + old.width / 2 - (x + width / 2) : old.x - x;
+        row.animate([{ transform: `translate(${dx}px, ${old.y - y}px) scale(${old.font / (parseFloat(cs.fontSize) || 1)})` }, { transform: 'none' }], MOVE);
+        row.animate([{ opacity: old.opacity, filter: old.filter }, { opacity: cs.opacity, filter: cs.filter }], FADE);
+      } else {
+        const below = !row.classList.contains('passed');
+        row.animate([{ transform: `translateY(${below ? 34 : -34}px) scale(.7)` }, { transform: 'none' }], MOVE);
+        row.animate([{ opacity: 0, filter: 'blur(5px)' }, { opacity: cs.opacity, filter: cs.filter }], FADE);
+      }
+    }
+    for (const [line, old] of rows) {
+      if (seen.has(line)) continue;
+      const ghost = old.row;
+      delete ghost.dataset.line;  // not taken for a line again if the next change comes before it is gone
+      Object.assign(ghost.style, { position: 'absolute', left: old.x + 'px', top: old.y + 'px', width: old.width + 'px', margin: '0', pointerEvents: 'none' });
+      root.append(ghost);
+      const away = ghost.animate([{ transform: 'none', opacity: old.opacity }, { transform: `translateY(${old.passed ? -38 : 38}px)`, opacity: 0 }], { ...FADE, fill: 'forwards' });
+      away.onfinish = away.oncancel = () => ghost.remove();
+    }
+  };
   const lines = pairBilingual(ctx.lines);
   let previousIndex = -2, optionsKey = '', timed = [], currentEnd = 0;
   // the caption's place above Folia's subtitle rows, as last measured (see paint)
@@ -208,7 +288,11 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
   // for them in its Monet settings is not something a mod can read.)
   const paint = () => {
     const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
-    const shown = hostRows(display);
+    let shown = hostRows(display);
+    // The poster has one row under the line, as Folia's has: with both on, the translation; and
+    // none while the player's subtitle layer is hidden.
+    if (poster) shown = display.hideTranslationSubtitle === true ? { translation: false, romaji: false }
+      : { translation: shown.translation, romaji: shown.romaji && !shown.translation };
     root.style.setProperty('--reading-primary', theme.primaryColor);
     root.style.setProperty('--reading-secondary', theme.secondaryColor);
     root.style.setProperty('--reading-accent', theme.accentColor);
@@ -216,15 +300,33 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
       root.style.setProperty('--reading-bg', theme.backgroundColor);
       root.classList.toggle('clear', seeThrough());
     }
-    root.style.fontFamily = folium.theme.resolveFontStack(theme);
-    if (!strip) root.style.setProperty('--weight', String(folium.theme.resolveFontWeight?.(theme, 600) ?? 600));
+    const font = folium.theme.resolveFontStack(theme), weight = folium.theme.resolveFontWeight?.(theme, 600) ?? 600;
+    root.style.fontFamily = font;
+    if (!strip) root.style.setProperty('--weight', String(weight));
     // Translations and the romanization row follow the host's subtitles: their theme (0.7.17 on;
     // before that the lyric theme), their font and weight.
     let subtitle = theme;
     try { subtitle = ctx.getSubtitleTheme?.() ?? theme; } catch { /* keep the lyric theme */ }
     root.style.setProperty('--reading-sub', subtitle.primaryColor);
-    root.style.setProperty('--sub-font', folium.theme.resolveTranslationFontStack?.(subtitle) ?? folium.theme.resolveFontStack(subtitle));
-    root.style.setProperty('--sub-weight', String(folium.theme.resolveFontWeight?.(subtitle, 500) ?? 500));
+    const subFont = folium.theme.resolveTranslationFontStack?.(subtitle) ?? folium.theme.resolveFontStack(subtitle);
+    const subWeight = folium.theme.resolveFontWeight?.(subtitle, 500) ?? 500;
+    root.style.setProperty('--sub-font', subFont);
+    root.style.setProperty('--sub-weight', String(subWeight));
+    if (poster && box) {
+      const withSub = shown.translation || shown.romaji;
+      const fitKey = JSON.stringify([box.width, box.height, font, weight, subFont, subWeight, withSub]);
+      if (fitted !== fitKey) {
+        fitted = fitKey;
+        const size = fitPoster(root.ownerDocument, box.width, box.height, font, weight, subFont, subWeight, withSub);
+        if (size) {
+          // the margin left and right is .6 of the size; the line being sung sits around 46% of the
+          // card's height, a little above the middle
+          root.style.setProperty('--fit', size + 'px');
+          root.style.setProperty('--pad', Math.ceil(size * .6) + 'px');
+          root.style.setProperty('--lift', Math.round(box.height * .08) + 'px');
+        }
+      }
+    }
     // Sizes follow the host's multipliers: the lyric size for the display mode, the subtitle size
     // for its translation. The host fits its poster lyrics to the card and has no multiplier
     // there, so the poster has none either; the caption keeps its own size.
@@ -268,6 +370,11 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     const keywords = !strip && theme.wordColors?.length ? theme.wordColors : null;
     const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords]);
     if (previousIndex !== index || optionsKey !== key) {
+      // lines move to their new places only as the song goes on to the next line, not on a seek
+      const moving = !strip && !ctx.staticMode && optionsKey === key && previousIndex !== -2
+        && (index === previousIndex + 1 || previousIndex === -1 || index === -1)
+        && typeof root.animate === 'function' && !view?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
+      const before = moving ? snapshot() : null;
       previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
       const options = strip
         ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
@@ -280,6 +387,7 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
       const addLine = (line, current, where = '') => {
         if (!line) return;
         const row = document.createElement(!poster && !strip && !ctx.isPreview && folium.env.context === 'main' ? 'button' : 'div');
+        row.dataset.line = String(lines.indexOf(line));
         row.className = current ? 'line current' + (line.isChorus ? ' chorus' : '') : 'line near ' + where;
         if (current) {
           // the glow of the last units lasts until the host would take the line off the screen
@@ -315,6 +423,7 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
         const next = lines.find(line => line.startTime > time);
         if (next) addLine(next, true);
       } else { addLine(lines[index - 1], false, 'passed'); addLine(lines[index], true); addLine(lines[index + 1], false, 'waiting'); }
+      if (before) settle(before);
     }
     for (const unit of timed) {
       const sung = time >= unit.end, now = time >= unit.start && time < unit.end;
@@ -348,5 +457,5 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
   const unsubscribeClock = ctx.onLyricTime(paint);
   const unsubscribeContext = ctx.onChange(paint);
   const unsubscribeParams = params.onChange(paint);
-  return () => { unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); root.remove(); style.remove(); };
+  return () => { resize?.disconnect(); unsubscribeClock(); unsubscribeContext(); unsubscribeParams(); root.remove(); style.remove(); };
 }

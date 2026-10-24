@@ -45,7 +45,7 @@ const CSS = `
   .reading.poster .current { line-height:1.7; }
   .reading.poster .near { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
   .reading.poster .near > div { display:inline; }
-  /* the one row under the line: translation or romanization, half size, at most two rows */
+  /* the rows under the line (romanization, translation): half size, at most two lines each */
   .reading.poster .secondary, .reading.poster .romaji { font-size:.5em; font-weight:var(--sub-weight,500); line-height:1.35; margin-top:.3em; letter-spacing:normal;
     display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
 
@@ -290,10 +290,10 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
   const paint = () => {
     const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
     let shown = hostRows(display);
-    // The poster has one row under the line, as Folia's has: with both on, the translation; and
-    // none while the player's subtitle layer is hidden.
-    if (poster) shown = display.hideTranslationSubtitle === true ? { translation: false, romaji: false }
-      : { translation: shown.translation, romaji: shown.romaji && !shown.translation };
+    // The poster shows no row under the line while the player's subtitle layer is hidden. With both
+    // rows on it shows both, romanization above the translation: Folia's own poster shows only the
+    // translation then, for now (its source says a second row is to come).
+    if (poster && display.hideTranslationSubtitle === true) shown = { translation: false, romaji: false };
     root.style.setProperty('--reading-primary', theme.primaryColor);
     root.style.setProperty('--reading-secondary', theme.secondaryColor);
     root.style.setProperty('--reading-accent', theme.accentColor);

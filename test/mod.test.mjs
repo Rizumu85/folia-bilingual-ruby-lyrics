@@ -255,6 +255,26 @@ test('lines from the file keep what Folia worked out for its own copy: chorus ef
   assert.equal(host.transform(LOCAL, base), base);
 });
 
+test('a song without readings gets the time of each word from the TimeTag version, its plain lines from Folia', async () => {
+  const song = { ...LOCAL, id: '-777', title: 'String', artist: 'Singer' };
+  const timed = ['[00:01:00]Open [00:01:40]the [00:01:90]curtains[00:03:00]', '[00:01:00]幕启[00:03:00]', '[00:05:00]Lights [00:05:60]on[00:07:00]', '@Offset=0', ''].join('\n');
+  const host = fakeHost();
+  const integration = createIntegration(host.folium, { readEmbedded: async () => [{ text: '[00:01.00]Open the curtains\n[00:01.00]幕启\n[00:05.00]Lights on' }, { text: timed }], findRecords: fileOf() });
+  // what Folia made of the plain LRC: the line times, the translation, words spread evenly
+  const base = [
+    { fullText: 'Open the curtains', startTime: 1, endTime: 5, translation: '幕启', words: [{ text: 'Open the curtains', startTime: 1, endTime: 5 }] },
+    { fullText: 'Lights on', startTime: 5, endTime: 7, words: [{ text: 'Lights on', startTime: 5, endTime: 7 }] },
+  ];
+  host.play(song);
+  host.transform(song, base);
+  await settle();
+  const [first, second] = host.transform(song, base);
+  assert.deepEqual(first.words.map(word => [word.text, word.startTime]), [['Open ', 1], ['the ', 1.4], ['curtains', 1.9]]);
+  assert.deepEqual([first.fullText, first.translation, second.words.length, second.words[1].startTime], ['Open the curtains', '幕启', 2, 5.6]);
+  assert.equal(integration.get().embedded, true);
+  integration.dispose();
+});
+
 test('lyrics Folia took from somewhere else, songs that are not local files and songs without lyrics are left alone', async () => {
   const host = fakeHost();
   let reads = 0;

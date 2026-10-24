@@ -62,7 +62,8 @@ function annotateInside(line, base, reading, start, end) {
 // NicoKaraMaker/TimeTag's @Ruby footer contains relative reading starts, and a next-element
 // boundary rather than an acoustic end. Keep that limitation when importing LRC.
 export function parseFaKara(text) {
-  const nico = /^@Ruby\d+=/m.test(text);
+  // TimeTag/NicoKara: the @Ruby footer, or (a song without readings) lines timed with [MM:SS:CC]
+  const nico = /^@Ruby\d+=/m.test(text) || /^\[\d+:\d{2}:\d{2,3}\]/m.test(text);
   const rhythmica = /\[(?:1|10)\|\d+:\d{2}:\d{2,3}\]/.test(text);
   if (!nico && !rhythmica) return null;
   const lines = [];

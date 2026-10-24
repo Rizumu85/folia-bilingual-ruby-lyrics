@@ -1362,7 +1362,8 @@ function annotateInside(line, base, reading, start, end) {
 // NicoKaraMaker/TimeTag's @Ruby footer contains relative reading starts, and a next-element
 // boundary rather than an acoustic end. Keep that limitation when importing LRC.
 function parseFaKara(text) {
-  const nico = /^@Ruby\d+=/m.test(text);
+  // TimeTag/NicoKara: the @Ruby footer, or (a song without readings) lines timed with [MM:SS:CC]
+  const nico = /^@Ruby\d+=/m.test(text) || /^\[\d+:\d{2}:\d{2,3}\]/m.test(text);
   const rhythmica = /\[(?:1|10)\|\d+:\d{2}:\d{2,3}\]/.test(text);
   if (!nico && !rhythmica) return null;
   const lines = [];
@@ -1600,6 +1601,11 @@ const keepHostData = (lines,hostLines) => {
   });
 };
 const hasRuby = lines => lines?.some(line => line.words?.some(word => word.ruby?.length || word.syllables?.some(unit => unit.ruby?.length)));
+// The file's TimeTag/NicoKara version (beside the plain LRC every player reads) is worth taking when it
+// has readings, or, for a song without readings (English, Chinese), the time of each word.
+const TIMETAG = /^\[\d+:\d{2}:\d{2,3}\]/m;
+const isTimeTag = text => /@Ruby\d*\s*=/.test(text) || TIMETAG.test(text);
+const wordTimed = lines => lines?.some(line => line.words?.length > 1);
 // Whether Folia is showing the lyrics embedded in the file (the plain version written beside the
 // readings) rather than lyrics from somewhere else: online ones, a lyric file next to the song, a
 // version the user picked, or none at all for a song marked instrumental. Most of its lines then
@@ -1639,10 +1645,10 @@ function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(r
         for (const record of records.slice(0,8)) {
           for (const source of await readEmbedded(record)) {
             // Ordinary embedded lyrics are already Folia's.
-            if (!/@Ruby\d*\s*=/.test(source.text)) continue;
+            if (!isTimeTag(source.text)) continue;
             try {
               const lyrics=parseFaKara(source.text);
-              if (hasRuby(lyrics?.lines)) {found.push(lyrics);break;}
+              if (hasRuby(lyrics?.lines) || wordTimed(lyrics?.lines)) {found.push(lyrics);break;}
             } catch { /* a malformed extension: the host's normal lyrics stay */ }
           }
         }

@@ -3,8 +3,10 @@ import { mountReading } from './renderer.mjs';
 // Opt-in ("海报歌词" in the settings, off by default). Folia 0.7.12 has no registry for the
 // lyrics drawn on the expanded poster card, so this adapter reaches into the host page: it adds
 // one <style>, one child element and one marker attribute per poster, and watches the page for
-// posters appearing. It is pinned to the host version through the manifest's "folia" range and
-// removes everything it added when disposed.
+// posters appearing. The manifest sets no "folia" range (that would switch the whole mod off on
+// the next host release): if the host changes this markup, the selector finds no poster, nothing is
+// hidden or added, and the host's own poster lyrics stay as they are. It removes everything it
+// added when disposed.
 // The public app.overlay context supplies the same lyric clock and theme as playback.
 const SELECTOR = '.lattice-root .lattice-poster.is-current.is-expanded';
 const MARKER = 'data-lyrics-display-split';

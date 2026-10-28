@@ -7,7 +7,7 @@ import { pairBilingual } from '../src/lyrics.mjs';
 import { parseFaKara } from '../src/fa-kara.mjs';
 import { parseId3 } from '../src/id3.mjs';
 import { createIntegration } from '../src/integration.mjs';
-import { romanizeLine } from '../src/romaji.mjs';
+import { romanizeLine, withRomanization } from '../src/romaji.mjs';
 import { readEmbeddedLyrics } from '../src/tags.mjs';
 import activate from '../bilingual-ruby-lyrics/client.mjs';
 import fs from 'node:fs';
@@ -68,6 +68,20 @@ test('Hangul is romanized from its readings, and lines with nothing to spell get
   assert.equal(romanizeLine(firstLine(korean)), 'bada ga');
   assert.equal(romanizeLine({ fullText: 'Night parade', words: [{ text: 'Night parade', startTime: 1, endTime: 2 }] }), undefined);
   assert.equal(romanizeLine({ fullText: '窗外的雨', words: [{ text: '窗外的雨', startTime: 1, endTime: 2 }] }), undefined);
+});
+
+test('Russian is spelled from its letters the way it is sung, other Cyrillic languages letter for letter', () => {
+  const plain = fullText => ({ fullText, words: [{ text: fullText, startTime: 1, endTime: 2 }] });
+  const lrc = ['[00:01:00]Есть [00:01:50]и [00:02:00]ситец[00:03:00]', '@Offset=0', ''].join('\n');
+  assert.equal(romanizeLine(firstLine(lrc)), 'yest i sitets');
+  assert.equal(romanizeLine(plain('Пожалей，душа-зазнобушка，')), 'pozhaley, dusha-zaznobushka,');
+  assert.equal(romanizeLine(plain('Молодецкого плеча, его нет, много чего')), 'molodetskovo plecha, yevo net, mnogo chevo');
+  assert.equal(romanizeLine(plain('Что улыбаться? Жёлтый')), 'shto ulybatsa? zholtyy');
+  assert.equal(romanizeLine(plain('Ще не вмерла України')), 'shche ne vmerla ukrayiny');
+  // one line without Ukrainian letters of its own is still read as Ukrainian in a Ukrainian song
+  const song = withRomanization([plain('Ще не вмерла України'), plain('Гей, браття')]);
+  assert.equal(song[1].romanization, 'hey, brattya');
+  assert.equal(romanizeLine(plain('Қазақстан')), 'qazaqstan');
 });
 
 // ID3v2.4 tag made of the given frames: [id, payload bytes]

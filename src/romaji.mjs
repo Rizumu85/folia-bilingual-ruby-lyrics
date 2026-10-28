@@ -1,6 +1,8 @@
 // Romanization of a line, built from the readings already on it: kana are spelled out as they
 // are, and anything with a ruby annotation is spelled from its reading. Nothing is looked up, so
-// the result is exactly as right as the embedded readings.
+// the result is exactly as right as the embedded readings. Lines in Cyrillic, which come without
+// readings, are spelled from their letters (cyrillic.mjs).
+import { CYRILLIC, cyrillicLanguage, cyrillicToLatin } from './cyrillic.mjs';
 
 const KANA = {
   あ:'a',い:'i',う:'u',え:'e',お:'o',
@@ -77,17 +79,27 @@ function sungCharacters(line) {
   return cells;
 }
 
-/** The line in Latin letters, or undefined when it has nothing to spell out (no kana, no readings). */
-export function romanizeLine(line) {
+// Full-width punctuation as it is written among Latin letters.
+const latinPunctuation = text => text.replace(/[，、]/gu, ', ').replace(/。/gu, '. ').replace(/！/gu, '! ').replace(/？/gu, '? ').replace(/：/gu, ': ').replace(/；/gu, '; ');
+
+/**
+ * The line in Latin letters, or undefined when it has nothing to spell out (no kana, no readings,
+ * no Cyrillic). `language` is the Cyrillic language of the whole song, when known.
+ */
+export function romanizeLine(line, language) {
   const cells = sungCharacters(line);
   const text = typeof line?.fullText === 'string' ? line.fullText : '';
   // the words must add up to the line, or the positions below mean nothing
-  if (!cells.length || cells.length !== [...text].length) return undefined;
-  if (!cells.some(cell => cell.read || isKana(cell.text))) return undefined;
+  if (!cells.length || cells.length !== [...text].length || !cells.some(cell => cell.read || isKana(cell.text))) {
+    // a line in Cyrillic without readings is spelled out as it is written
+    if (!CYRILLIC.test(text)) return undefined;
+    const result = latinPunctuation(cyrillicToLatin(text, language)).replace(/\s+/g, ' ').replace(/\s+([,.!?:;])/g, '$1').trim();
+    return result || undefined;
+  }
   // the splitter counts in UTF-16 units, the cells in characters
   const offsets = new Map();
   { let units = 0, count = 0; for (const char of text) { offsets.set(units, count++); units += char.length; } }
-  const spell = sung => kanaToLatin(sung).replace(/[^\p{L}\p{N}'’\-]+/gu, ' ');
+  const spell = sung => cyrillicToLatin(kanaToLatin(sung), language).replace(/[^\p{L}\p{N}'’\-]+/gu, ' ');
   const pieces = [], sungPieces = [];
   let afterReading = false;
   for (const { index, segment } of wordsOf(text)) {
@@ -116,8 +128,12 @@ export function romanizeLine(line) {
 }
 
 /** Lines with a romanization added where they have none and one can be built. */
-export const withRomanization = lines => lines.map(line => {
-  if (line?.romanization) return line;
-  const romanization = romanizeLine(line);
-  return romanization ? { ...line, romanization } : line;
-});
+export const withRomanization = lines => {
+  // the language is told from the whole song: a single line may have none of its own letters
+  const language = cyrillicLanguage(lines.map(line => line?.fullText ?? '').join('\n'));
+  return lines.map(line => {
+    if (line?.romanization) return line;
+    const romanization = romanizeLine(line, language);
+    return romanization ? { ...line, romanization } : line;
+  });
+};

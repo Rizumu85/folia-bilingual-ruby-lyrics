@@ -1471,11 +1471,75 @@ function parseFaKara(text) {
 return { parseFaKara };
 })();
 
+// ---- cyrillic.mjs
+const __cyrillic = (() => {
+// Latin letters for lyrics written in Cyrillic, worked out from the spelling alone: these lyrics
+// carry no readings to follow. Russian is spelled the way it is sung wherever the spelling gives
+// that away (его = yevo, что = shto, -ться = -tsa); stress is not written, so an unstressed о
+// stays o. Ukrainian, Belarusian, Kazakh, Serbian and Macedonian, told apart by their own letters,
+// get their usual Latin spelling letter for letter.
+
+const CYRILLIC = /[Ѐ-ӿ]/u;
+const WORD = /[Ѐ-ӿ]+/gu;
+
+const RUSSIAN = {
+  а:'a',б:'b',в:'v',г:'g',д:'d',е:'e',ё:'yo',ж:'zh',з:'z',и:'i',й:'y',к:'k',л:'l',м:'m',н:'n',о:'o',п:'p',
+  р:'r',с:'s',т:'t',у:'u',ф:'f',х:'kh',ц:'ts',ч:'ch',ш:'sh',щ:'shch',ъ:'',ы:'y',ь:'',э:'e',ю:'yu',я:'ya',
+};
+const LETTERS = {
+  ru: RUSSIAN,
+  uk: { ...RUSSIAN, г:'h', ґ:'g', и:'y', і:'i', ї:'yi', є:'ye' },
+  be: { ...RUSSIAN, г:'h', ў:'w', і:'i' },
+  kk: { ...RUSSIAN, ә:'ä', ғ:'ğ', ж:'j', й:'i', қ:'q', ң:'ñ', ө:'ö', ұ:'ū', ү:'ü', х:'h', һ:'h', і:'ı' },
+  sr: { ...RUSSIAN, ђ:'đ', ж:'ž', ј:'j', љ:'lj', њ:'nj', ћ:'ć', х:'h', ц:'c', ч:'č', џ:'dž', ш:'š', ѓ:'gj', ќ:'kj', ѕ:'dz' },
+};
+// the letters each language has and Russian does not; checked in this order, since Kazakh and
+// Belarusian also write і
+const OWN_LETTERS = [['sr', /[јљњћђџѓќѕ]/iu], ['kk', /[әғқңөұүһ]/iu], ['be', /ў/iu], ['uk', /[іїєґ]/iu]];
+
+// Russian words not said the way they are written
+const SAID = { что:'shto', чтобы:'shtoby', ничто:'nishto', конечно:'koneshno', скучно:'skushno', нарочно:'naroshno', сегодня:'sevodnya' };
+// words where -ого is part of the word, not the ending said -ovo
+const OGO_IN_THE_WORD = new Set(['много','немного','строго','нестрого','дорого','недорого','убого','полого','отлого','ого']);
+const AFTER_VOWEL = /[аеёиоуыэюяъь]/u;
+
+function russianWord(word) {
+  const lower = word.toLowerCase();
+  if (SAID[lower]) return SAID[lower];
+  let spelled = OGO_IN_THE_WORD.has(lower) ? lower : lower.replace(/([ое])го$/u, '$1во');
+  spelled = spelled.replace(/ть?ся$/u, 'ца');
+  const chars = [...spelled];
+  return chars.map((char, index) => {
+    const before = chars[index - 1];
+    // е starts with a y sound at the start of a word and after a vowel; ё has none after ж ш ч щ ц
+    if (char === 'е' && (index === 0 || AFTER_VOWEL.test(before))) return 'ye';
+    if (char === 'ё' && /[жшчщц]/u.test(before ?? '')) return 'o';
+    return RUSSIAN[char] ?? char;
+  }).join('');
+}
+
+/** The language of some Cyrillic text, from the letters only that language has. */
+function cyrillicLanguage(text) {
+  return OWN_LETTERS.find(([, letters]) => letters.test(text))?.[0] ?? 'ru';
+}
+
+/** The Cyrillic words of a text in Latin letters, lower case; everything else is left as it is. */
+function cyrillicToLatin(text, language = cyrillicLanguage(text)) {
+  const letters = LETTERS[language] ?? RUSSIAN;
+  return text.replace(WORD, word => language === 'ru'
+    ? russianWord(word)
+    : [...word.toLowerCase()].map(char => letters[char] ?? char).join(''));
+}
+return { CYRILLIC, cyrillicLanguage, cyrillicToLatin };
+})();
+
 // ---- romaji.mjs
 const __romaji = (() => {
 // Romanization of a line, built from the readings already on it: kana are spelled out as they
 // are, and anything with a ruby annotation is spelled from its reading. Nothing is looked up, so
-// the result is exactly as right as the embedded readings.
+// the result is exactly as right as the embedded readings. Lines in Cyrillic, which come without
+// readings, are spelled from their letters (cyrillic.mjs).
+const { CYRILLIC, cyrillicLanguage, cyrillicToLatin } = __cyrillic;
 
 const KANA = {
   あ:'a',い:'i',う:'u',え:'e',お:'o',
@@ -1552,17 +1616,27 @@ function sungCharacters(line) {
   return cells;
 }
 
-/** The line in Latin letters, or undefined when it has nothing to spell out (no kana, no readings). */
-function romanizeLine(line) {
+// Full-width punctuation as it is written among Latin letters.
+const latinPunctuation = text => text.replace(/[，、]/gu, ', ').replace(/。/gu, '. ').replace(/！/gu, '! ').replace(/？/gu, '? ').replace(/：/gu, ': ').replace(/；/gu, '; ');
+
+/**
+ * The line in Latin letters, or undefined when it has nothing to spell out (no kana, no readings,
+ * no Cyrillic). `language` is the Cyrillic language of the whole song, when known.
+ */
+function romanizeLine(line, language) {
   const cells = sungCharacters(line);
   const text = typeof line?.fullText === 'string' ? line.fullText : '';
   // the words must add up to the line, or the positions below mean nothing
-  if (!cells.length || cells.length !== [...text].length) return undefined;
-  if (!cells.some(cell => cell.read || isKana(cell.text))) return undefined;
+  if (!cells.length || cells.length !== [...text].length || !cells.some(cell => cell.read || isKana(cell.text))) {
+    // a line in Cyrillic without readings is spelled out as it is written
+    if (!CYRILLIC.test(text)) return undefined;
+    const result = latinPunctuation(cyrillicToLatin(text, language)).replace(/\s+/g, ' ').replace(/\s+([,.!?:;])/g, '$1').trim();
+    return result || undefined;
+  }
   // the splitter counts in UTF-16 units, the cells in characters
   const offsets = new Map();
   { let units = 0, count = 0; for (const char of text) { offsets.set(units, count++); units += char.length; } }
-  const spell = sung => kanaToLatin(sung).replace(/[^\p{L}\p{N}'’\-]+/gu, ' ');
+  const spell = sung => cyrillicToLatin(kanaToLatin(sung), language).replace(/[^\p{L}\p{N}'’\-]+/gu, ' ');
   const pieces = [], sungPieces = [];
   let afterReading = false;
   for (const { index, segment } of wordsOf(text)) {
@@ -1591,11 +1665,15 @@ function romanizeLine(line) {
 }
 
 /** Lines with a romanization added where they have none and one can be built. */
-const withRomanization = lines => lines.map(line => {
-  if (line?.romanization) return line;
-  const romanization = romanizeLine(line);
-  return romanization ? { ...line, romanization } : line;
-});
+const withRomanization = lines => {
+  // the language is told from the whole song: a single line may have none of its own letters
+  const language = cyrillicLanguage(lines.map(line => line?.fullText ?? '').join('\n'));
+  return lines.map(line => {
+    if (line?.romanization) return line;
+    const romanization = romanizeLine(line, language);
+    return romanization ? { ...line, romanization } : line;
+  });
+};
 return { romanizeLine, withRomanization };
 })();
 

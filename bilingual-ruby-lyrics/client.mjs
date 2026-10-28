@@ -195,6 +195,10 @@ const CSS = `
     background-image:linear-gradient(90deg, var(--ink) 0%, color-mix(in srgb, var(--ink) var(--ink-dim,100%), var(--base)) calc(var(--p,0%) + (var(--pn,0) - 1) * var(--soft)), var(--base) calc(var(--p,0%) + var(--pn,0) * var(--soft))); }
   .reading .current .timed.glow { filter:drop-shadow(0 0 var(--near) color-mix(in srgb, var(--word) var(--g1,0%), transparent)) drop-shadow(0 0 var(--far) color-mix(in srgb, var(--word) var(--g2,0%), transparent)); }
   .reading .near { font-size:calc(var(--size) * .72); line-height:1.3; }
+  /* a second voice coming in over the line being sung: smaller, close under it, without rows of its own */
+  .reading .current.voice { font-size:calc(var(--size) * .6); line-height:1.6; }
+  .reading .current { transition:opacity .3s ease-out; }
+  .reading .current.done { opacity:.45; }
   .reading .near.passed { color:var(--word); opacity:.52; filter:blur(1.1px); }
   .reading .near.passed .timed { color:var(--word); }
   .reading .near.waiting { color:color-mix(in srgb, var(--reading-primary) 46%, transparent); opacity:.72; filter:blur(.7px); }
@@ -212,6 +216,7 @@ const CSS = `
   .reading.poster { --size:var(--fit,clamp(24px,7cqw,56px)); padding:0 var(--pad,12px) var(--lift,0px); text-align:left;
     -webkit-mask-image:linear-gradient(to bottom, transparent, #000 9%, #000 91%, transparent), linear-gradient(to right, transparent, #000 4%, #000 96%, transparent); -webkit-mask-composite:source-in; mask-composite:intersect; }
   .reading.poster .current { line-height:1.7; }
+  .reading.poster .current.voice { line-height:1.6; padding-left:.7em; border-left:2px solid color-mix(in srgb, var(--reading-primary) 30%, transparent); }
   .reading.poster .near { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
   .reading.poster .near > div { display:inline; }
   /* the rows under the line (romanization, translation): half size, at most two lines each */
@@ -223,6 +228,7 @@ const CSS = `
      the lyric colour, the unit being sung in the accent colour; no sweep, no glow. */
   .reading.strip { --size:clamp(18px,2.3vw,34px); --weight:500; height:auto; position:absolute; left:0; right:0; padding:0 clamp(16px,6vw,96px); gap:0; pointer-events:none; align-items:center; overflow:visible; }
   .reading.strip .current { color:var(--reading-primary); }
+  .reading.strip .current.voice { font-size:.72em; margin-top:0; }
   .reading.strip .current .timed { background-image:none; -webkit-text-fill-color:currentColor; color:var(--reading-secondary); }
   .reading.strip .current .timed.sung { color:var(--reading-primary); }
   .reading.strip .current .timed.now { color:var(--reading-accent); }
@@ -441,9 +447,34 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     }
   };
   const lines = pairBilingual(ctx.lines);
-  let previousIndex = -2, optionsKey = '', timed = [], currentEnd = 0;
+  let previousIndex = -2, optionsKey = '', timed = [], rows = [];
   // the caption's place above Folia's subtitle rows, as last measured (see paint)
   let measured = null, measuredAt = 0;
+  // where a line's last unit is sung, as the host would keep it on the screen
+  const endOf = line => {
+    try { return Math.max(line.endTime, folium.lyrics?.getLineRenderEndTime?.(line) ?? line.endTime); } catch { return line.endTime; }
+  };
+  // Lines sung over each other (亡国のネメシス: a second voice comes in while the first is still going;
+  // the host keeps one line at a time, so the first stopped lighting up). The lines on the screen are
+  // the last one started and those still being sung when it started: they change only as a line
+  // starts, never as one ends (a line that ends dims where it is), and stay in the order they started.
+  const groupOf = index => {
+    if (index < 0 || ctx.staticMode) return index < 0 ? [] : [index];
+    const at = lines[index].startTime, group = [];
+    for (let i = Math.max(0, index - 4); i < index; i++) if (lines[i].startTime <= at && at < endOf(lines[i])) group.push(i);
+    return [...group, index];
+  };
+  // A line's part is settled as it starts and kept: one that starts while a leading line still has
+  // half a second or more to go is a second voice (drawn small); otherwise it leads, also when only a second voice is
+  // still going (the next line of the first voice). Lines starting together are a duet: both lead.
+  const voice = [];
+  lines.forEach((line, i) => {
+    voice[i] = false;
+    for (let j = Math.max(0, i - 4); j < i; j++) {
+      // (a line that starts as the one before is just ending is the next line, not a second voice)
+      if (!voice[j] && lines[j].startTime < line.startTime - .05 && line.startTime < endOf(lines[j]) - .5) voice[i] = true;
+    }
+  });
   const indexAt = time => {
     if (ctx.staticMode) return Math.min(lines.length - 1, Math.max(0, ctx.staticLineIndex ?? 0));
     let selected = -1;
@@ -451,7 +482,7 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
       if (lines[i].startTime <= time) selected = i;
       else break;
     }
-    if (selected >= 0 && time > lines[selected].endTime + 1) return -1;
+    if (selected >= 0 && time > Math.max(...groupOf(selected).map(i => lines[i].endTime)) + 1) return -1;
     return selected;
   };
   // Keyword colours: those of the theme, as Folia's poster lyrics use them. (The switch Folia keeps
@@ -535,7 +566,7 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
       }
       root.style.bottom = Math.round(bottom) + 'px';
     }
-    const time = ctx.lyricTime.get(), index = indexAt(time);
+    const time = ctx.lyricTime.get(), index = indexAt(time), singing = groupOf(index);
     // keyword colours are for the display mode and the poster; the caption has the theme's three colours only
     const keywords = !strip && theme.wordColors?.length ? theme.wordColors : null;
     const key = JSON.stringify([settings.primary, settings.ruby, shown, keywords]);
@@ -545,7 +576,7 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
         && (index === previousIndex + 1 || previousIndex === -1 || index === -1)
         && typeof root.animate === 'function' && !view?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       const before = moving ? snapshot() : null;
-      previousIndex = index; optionsKey = key; timed = []; root.replaceChildren();
+      previousIndex = index; optionsKey = key; timed = []; rows = []; root.replaceChildren();
       const options = strip
         ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
         : { primary: settings.primary === 'translation' ? 'translation' : 'original', bilingual: shown.translation, ruby: settings.ruby !== false, romaji: shown.romaji };
@@ -554,17 +585,14 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
         try { return folium.lyrics?.buildWordColorRanges?.(line.fullText, keywords) || []; } catch { return []; }
       };
       // where: 'passed' for the line before the current one, 'waiting' for the one after
-      const addLine = (line, current, where = '') => {
+      // voice: a line that came in while another is still being sung (a second voice), drawn small
+      const addLine = (line, current, where = '', voice = false) => {
         if (!line) return;
         const row = document.createElement(!poster && !strip && !ctx.isPreview && folium.env.context === 'main' ? 'button' : 'div');
         row.dataset.line = String(lines.indexOf(line));
-        row.className = current ? 'line current' + (line.isChorus ? ' chorus' : '') : 'line near ' + where;
-        if (current) {
-          // the glow of the last units lasts until the host would take the line off the screen
-          let end = line.endTime;
-          try { end = Math.max(end, folium.lyrics?.getLineRenderEndTime?.(line) ?? end); } catch { /* keep the line's own end */ }
-          currentEnd = end;
-        }
+        row.className = current ? 'line current' + (line.isChorus ? ' chorus' : '') + (voice ? ' voice' : '') : 'line near ' + where;
+        // the glow of a line's last units lasts until the host would take that line off the screen
+        const end = current ? endOf(line) : 0, first = timed.length;
         if (row.tagName === 'BUTTON') {
           row.type = 'button'; row.title = '跳到这句歌词';
           row.addEventListener('click', () => folium.playback.seekToLyricTime(line.startTime));
@@ -575,26 +603,36 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
         else appendOriginal(main, line, options.ruby && current, current ? timed : [], coloursOf(line));
         row.append(main);
         // the romanization goes with the original, wherever that is drawn
-        const romaji = current && options.romaji && line.romanization ? document.createElement('div') : null;
+        const romaji = current && !voice && options.romaji && line.romanization ? document.createElement('div') : null;
         if (romaji) { romaji.className = 'romaji'; romaji.textContent = line.romanization; }
         if (romaji && !translated) row.append(romaji);
-        if (current && options.bilingual && line.translation) {
+        if (current && !voice && options.bilingual && line.translation) {
           const secondary = document.createElement('div'); secondary.className = 'secondary';
           if (translated) appendOriginal(secondary, line, options.ruby, timed, coloursOf(line));
           else { secondary.textContent = line.translation; secondary.classList.add('translation'); }
           row.append(secondary);
           if (romaji && translated) row.append(romaji);
         }
+        for (let k = first; k < timed.length; k++) timed[k].lineEnd = end;
+        if (current) rows.push({ row, end: line.endTime });
         root.append(row);
       };
-      if (strip) addLine(lines[index], true);
+      if (strip) for (const i of singing) addLine(lines[i], true, '', voice[i]);
       else if (!lines.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = '这首歌暂无歌词'; root.append(empty); }
       else if (index < 0) {
         const next = lines.find(line => line.startTime > time);
         if (next) addLine(next, true);
-      } else { addLine(lines[index - 1], false, 'passed'); addLine(lines[index], true); addLine(lines[index + 1], false, 'waiting'); }
+      } else {
+        // while two are sung the line before them gives up its row, and on the poster the next one too
+        const together = singing.length > 1;
+        if (!together) addLine(lines[index - 1], false, 'passed');
+        for (const i of singing) addLine(lines[i], true, '', voice[i]);
+        if (!together || !poster) addLine(lines[index + 1], false, 'waiting');
+      }
       if (before) settle(before);
     }
+    // of several lines on the screen, one already sung dims where it is
+    if (rows.length > 1) for (const { row, end } of rows) row.classList.toggle('done', time >= end);
     for (const unit of timed) {
       const sung = time >= unit.end, now = time >= unit.start && time < unit.end;
       const state = sung ? 'sung' : now ? 'now' : '';
@@ -621,7 +659,7 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
         unit.element.style.setProperty('--ink-dim', (dim * 100).toFixed(1) + '%');
       }
       // the glow, in steps of 1/40 so that the filter is not rebuilt for changes nobody can see
-      const glow = unit.main && !ctx.staticMode ? Math.round(glowAt(time, unit.start, unit.end, currentEnd) * 40) / 40 : 0;
+      const glow = unit.main && !ctx.staticMode ? Math.round(glowAt(time, unit.start, unit.end, unit.lineEnd) * 40) / 40 : 0;
       if (unit.glow !== glow) {
         unit.glow = glow;
         unit.element.classList.toggle('glow', glow > 0);

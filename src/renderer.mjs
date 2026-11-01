@@ -32,7 +32,15 @@ const CSS = `
   .reading .current.done { opacity:.45; }
   .reading .near.passed { color:var(--word); opacity:.52; filter:blur(1.1px); }
   .reading .near.passed .timed { color:var(--word); }
-  .reading .near.waiting { color:color-mix(in srgb, var(--reading-primary) 46%, transparent); opacity:.72; filter:blur(.7px); }
+  /* the line to come is read ahead to sing it, so it is not blurred and has its rows too */
+  .reading .near.waiting { color:color-mix(in srgb, var(--reading-primary) 52%, transparent); opacity:.8; }
+  /* its rows are as large as those of the line being sung (the line itself is at .72) */
+  .reading .near.waiting .secondary { font-size:calc(.5em / .72 * var(--sub-scale,1)); }
+  .reading .near.waiting .romaji { font-size:calc(.42em / .72 * var(--sub-scale,1)); }
+  /* a long rest before the next line: three dots, going out one a second over its last three seconds */
+  .reading .countdown { font-size:.3em; line-height:1; margin-bottom:1em; letter-spacing:.5em; color:var(--reading-accent); }
+  .reading .countdown span { transition:opacity .25s ease-out; }
+  .reading .countdown span.out { opacity:0; }
   .reading .secondary { font-size:calc(.5em * var(--sub-scale,1)); font-weight:500; margin-top:.3em; line-height:1.4; color:color-mix(in srgb, var(--reading-primary) 68%, transparent); }
   /* a translation, wherever it is drawn, is set in the font the host's subtitles use; as the small row it also takes their weight and colour */
   .reading .translation { font-family:var(--sub-font,inherit); }
@@ -48,11 +56,12 @@ const CSS = `
     -webkit-mask-image:linear-gradient(to bottom, transparent, #000 9%, #000 91%, transparent), linear-gradient(to right, transparent, #000 4%, #000 96%, transparent); -webkit-mask-composite:source-in; mask-composite:intersect; }
   .reading.poster .current { line-height:1.7; }
   .reading.poster .current.voice { line-height:1.6; padding-left:.7em; border-left:2px solid color-mix(in srgb, var(--reading-primary) 30%, transparent); }
-  .reading.poster .near { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
-  .reading.poster .near > div { display:inline; }
+  .reading.poster .near.passed, .reading.poster .near.waiting > div:first-child { display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+  .reading.poster .near.passed > div { display:inline; }
   /* the rows under the line (romanization, translation): half size, at most two lines each */
   .reading.poster .secondary, .reading.poster .romaji { font-size:.5em; font-weight:var(--sub-weight,500); line-height:1.35; margin-top:.3em; letter-spacing:normal;
     display:-webkit-box; -webkit-box-orient:vertical; -webkit-line-clamp:2; overflow:hidden; }
+  .reading.poster .near.waiting .secondary, .reading.poster .near.waiting .romaji { font-size:calc(.5em / .72); }
 
   /* The caption does not follow the host's subtitle settings: it is always opaque, one size, and
      uses nothing but the theme's colours. Words to come are in the secondary colour, sung words in
@@ -138,6 +147,31 @@ const hostRows = display => {
   return { translation: true, romaji: hostSetting('subtitle_content_mode') === 'both' };
 };
 
+// The poster is drawn in Folia's app.overlay layer, whose theme is the app's bare theme: the lyric
+// and subtitle fonts chosen in Folia's settings (style, weight, custom font, fallbacks) are put on
+// it only for the player page. The poster takes them from where Folia stores them, and puts them
+// on as the player page's theme is built (buildVisualizerTheme, 0.7.23).
+const storedStyle = key => { const style = hostSetting(key); return style === 'serif' || style === 'mono' ? style : 'sans'; };
+const storedWeight = key => { const saved = hostSetting(key), weight = saved ? Number(saved) : NaN; return Number.isFinite(weight) ? weight : undefined; };
+const storedFamilies = key => {
+  const saved = hostSetting(key);
+  if (!saved) return [];
+  try {
+    const parsed = JSON.parse(saved);
+    return Array.isArray(parsed) ? parsed.filter(family => typeof family === 'string') : typeof parsed === 'string' ? parsed.split(',') : [];
+  } catch { return saved.split(','); }
+};
+function withHostFonts(theme) {
+  let custom;
+  try { custom = JSON.parse(hostSetting('lyrics_custom_font') ?? 'null')?.family?.trim() || undefined; } catch { /* no custom font */ }
+  const lyric = { ...theme, fontStyle: storedStyle('lyrics_font_style'), fontWeight: storedWeight('lyrics_font_weight'), fontFamily: custom, fontFamilyStack: storedFamilies('lyrics_font_fallback_families') };
+  const subtitle = hostSetting('subtitle_font_inherits_lyrics') === 'false'
+    ? { ...theme, fontStyle: storedStyle('subtitle_font_style'), fontWeight: storedWeight('subtitle_font_weight'),
+        fontFamily: hostSetting('subtitle_font_family')?.trim() || undefined, fontFamilyStack: storedFamilies('subtitle_font_fallback_families') }
+    : lyric;
+  return { lyric, subtitle };
+}
+
 // The user has hidden Folia's bottom subtitle layer on the player page. A stage layer is not told
 // (the host computes it outside its stores), so the stored setting is read.
 const hostLayerHidden = display => display.hideTranslationSubtitle === true || hostSetting('hide_player_translation_subtitle') === 'true';
@@ -197,11 +231,16 @@ function glowAt(time, start, end, lineEnd) {
 // leave between themselves; it is taken in slightly so that the three lines read as one group.
 const STRIP_GAP = -4;
 
+// Seconds without singing before a line that earn it the countdown dots.
+const COUNTDOWN_REST = 4;
+
 // The poster's size, as Folia sizes its own poster lyrics: the largest from 64px down to 24px at
 // which a fixed budget fits the card's height (three rows of the line being sung and two of each
 // line beside it at .72, with the gaps between them and the room around, plus two half-size rows
-// under the line when one is shown) and three widths of "国Agyp" fit across it. The budget is
-// fixed so that the size does not change from line to line.
+// under the line being sung and under the next one when they are shown) and three widths of
+// "国Agyp" fit across it. The budget is fixed so that the size does not change from line to line.
+// The rows under the next line are this mod's own, so with them the size comes out smaller than
+// the host's.
 function fitPoster(doc, width, height, font, weight, subFont, subWeight, withSub) {
   const pen = doc.createElement('canvas').getContext('2d');
   if (!pen) return null;
@@ -213,7 +252,7 @@ function fitPoster(doc, width, height, font, weight, subFont, subWeight, withSub
   for (let size = 64; size > 24; size--) {
     const main = measure(`${weight} ${size}px ${font}`), row = Math.max(size * 1.18, main.height + 2);
     const sub = withSub ? Math.max(size * .675, measure(`${subWeight} ${size / 2}px ${subFont}`).height + 2) * 2 + size * .3 : 0;
-    if (row * 4.44 + size * 2.18 + sub <= height && main.width * 3 <= width - size * 1.2) return size;
+    if (row * 4.44 + size * 2.18 + sub * 2 <= height && main.width * 3 <= width - size * 1.2) return size;
   }
   return 24;
 }
@@ -278,7 +317,7 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     }
   };
   const lines = pairBilingual(ctx.lines);
-  let previousIndex = -2, optionsKey = '', timed = [], rows = [];
+  let previousIndex = -2, optionsKey = '', timed = [], rows = [], countdown = null;
   // the caption's place above Folia's subtitle rows, as last measured (see paint)
   let measured = null, measuredAt = 0;
   // where a line's last unit is sung, as the host would keep it on the screen
@@ -319,7 +358,12 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
   // Keyword colours: those of the theme, as Folia's poster lyrics use them. (The switch Folia keeps
   // for them in its Monet settings is not something a mod can read.)
   const paint = () => {
-    const theme = ctx.getTheme(), display = ctx.getDisplay(), settings = params.get();
+    const display = ctx.getDisplay(), settings = params.get();
+    let theme = ctx.getTheme(), subtitle = theme;
+    // Translations and the romanization row follow the host's subtitles: their theme (0.7.17 on;
+    // before that the lyric theme), their font and weight.
+    try { subtitle = ctx.getSubtitleTheme?.() ?? theme; } catch { /* keep the lyric theme */ }
+    if (poster) ({ lyric: theme, subtitle } = withHostFonts(theme));
     let shown = hostRows(display);
     // The poster shows no row under the line while the player's subtitle layer is hidden. With both
     // rows on it shows both, romanization above the translation: Folia's own poster shows only the
@@ -335,10 +379,6 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     const font = folium.theme.resolveFontStack(theme), weight = folium.theme.resolveFontWeight?.(theme, 600) ?? 600;
     root.style.fontFamily = font;
     if (!strip) root.style.setProperty('--weight', String(weight));
-    // Translations and the romanization row follow the host's subtitles: their theme (0.7.17 on;
-    // before that the lyric theme), their font and weight.
-    let subtitle = theme;
-    try { subtitle = ctx.getSubtitleTheme?.() ?? theme; } catch { /* keep the lyric theme */ }
     root.style.setProperty('--reading-sub', subtitle.primaryColor);
     const subFont = folium.theme.resolveTranslationFontStack?.(subtitle) ?? folium.theme.resolveFontStack(subtitle);
     const subWeight = folium.theme.resolveFontWeight?.(subtitle, 500) ?? 500;
@@ -407,7 +447,7 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
         && (index === previousIndex + 1 || previousIndex === -1 || index === -1)
         && typeof root.animate === 'function' && !view?.matchMedia?.('(prefers-reduced-motion: reduce)').matches;
       const before = moving ? snapshot() : null;
-      previousIndex = index; optionsKey = key; timed = []; rows = []; root.replaceChildren();
+      previousIndex = index; optionsKey = key; timed = []; rows = []; countdown = null; root.replaceChildren();
       const options = strip
         ? { primary: 'original', bilingual: false, ruby: true, romaji: false }
         : { primary: settings.primary === 'translation' ? 'translation' : 'original', bilingual: shown.translation, ruby: settings.ruby !== false, romaji: shown.romaji };
@@ -433,13 +473,15 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
         if (translated) { main.textContent = line.translation; main.className = 'plain translation'; }
         else appendOriginal(main, line, options.ruby && current, current ? timed : [], coloursOf(line));
         row.append(main);
-        // the romanization goes with the original, wherever that is drawn
-        const romaji = current && !voice && options.romaji && line.romanization ? document.createElement('div') : null;
+        // the romanization goes with the original, wherever that is drawn; the next line has its
+        // rows too, to be read before it is sung
+        const rowsUnder = (current || where === 'waiting') && !voice;
+        const romaji = rowsUnder && options.romaji && line.romanization ? document.createElement('div') : null;
         if (romaji) { romaji.className = 'romaji'; romaji.textContent = line.romanization; }
         if (romaji && !translated) row.append(romaji);
-        if (current && !voice && options.bilingual && line.translation) {
+        if (rowsUnder && options.bilingual && line.translation) {
           const secondary = document.createElement('div'); secondary.className = 'secondary';
-          if (translated) appendOriginal(secondary, line, options.ruby, timed, coloursOf(line));
+          if (translated) appendOriginal(secondary, line, options.ruby && current, current ? timed : [], coloursOf(line));
           else { secondary.textContent = line.translation; secondary.classList.add('translation'); }
           row.append(secondary);
           if (romaji && translated) row.append(romaji);
@@ -451,19 +493,32 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
       if (strip) for (const i of singing) addLine(lines[i], true, '', voice[i]);
       else if (!lines.length) { const empty = document.createElement('div'); empty.className = 'empty'; empty.textContent = '这首歌暂无歌词'; root.append(empty); }
       else if (index < 0) {
-        const next = lines.find(line => line.startTime > time);
+        const at = lines.findIndex(line => line.startTime > time), next = lines[at];
         if (next) addLine(next, true);
+        // before a line that comes after a rest of four seconds or more (counted from the end of
+        // the line before it, or from the start of the song), the countdown dots
+        const restFrom = at > 0 ? Math.max(...lines.slice(Math.max(0, at - 4), at).map(endOf)) : 0;
+        if (next && !ctx.staticMode && next.startTime - restFrom >= COUNTDOWN_REST) {
+          const dots = document.createElement('div'); dots.className = 'countdown'; dots.setAttribute('aria-hidden', 'true');
+          for (let k = 0; k < 3; k++) { const dot = document.createElement('span'); dot.textContent = '●'; dots.append(dot); }
+          root.lastElementChild.prepend(dots);
+          countdown = { dots: [...dots.children], start: next.startTime };
+        }
       } else {
-        // while two are sung the line before them gives up its row, and on the poster the next one too
-        const together = singing.length > 1;
-        if (!together) addLine(lines[index - 1], false, 'passed');
+        // while two are sung the line before them gives up its row
+        if (singing.length === 1) addLine(lines[index - 1], false, 'passed');
         for (const i of singing) addLine(lines[i], true, '', voice[i]);
-        if (!together || !poster) addLine(lines[index + 1], false, 'waiting');
+        addLine(lines[index + 1], false, 'waiting', voice[index + 1]);
       }
       if (before) settle(before);
     }
     // of several lines on the screen, one already sung dims where it is
     if (rows.length > 1) for (const { row, end } of rows) row.classList.toggle('done', time >= end);
+    // the dots go out from the right, one at three, two and one second before the line
+    if (countdown) {
+      const left = Math.min(3, Math.max(0, Math.ceil(countdown.start - time)));
+      countdown.dots.forEach((dot, k) => dot.classList.toggle('out', k >= left));
+    }
     for (const unit of timed) {
       const sung = time >= unit.end, now = time >= unit.start && time < unit.end;
       const state = sung ? 'sung' : now ? 'now' : '';

@@ -154,6 +154,61 @@ function pairBilingual(lines, primary = "original") {
   });
 }
 
+/**
+ * Which lines are a second voice, and over which line each came in: for every line the index of its
+ * leading line, or -1 for a line that leads. A line's part is settled as it starts: one that starts
+ * while a leading line has 1.5 seconds or more to go is a second voice, and so is one with a second
+ * or more to go and words of it yet to start. Otherwise it leads, also when only a second voice is
+ * still going (the next line of the first voice). Lines starting together are a duet: both lead.
+ * Lines of a song often overlap by up to a second with one simply following the other, or the last
+ * word of one held over the start of the next (over the whole library, most overlaps under a second
+ * are such lines); a second voice sung for real goes on longer. `endOf` says how long a line lasts.
+ * A background vocal already taken out of its line (`vocal`, see unfoldVocals) is a second voice
+ * whatever the times say.
+ */
+function secondVoiceOf(lines, endOf = line => line.endTime) {
+  const lead = [];
+  lines.forEach((line, i) => {
+    lead[i] = line.vocal ? Math.max(0, i - 1) : -1;
+    if (line.vocal) return;
+    for (let j = Math.max(0, i - 4); j < i; j++) {
+      if (lead[j] >= 0 || lines[j].startTime >= line.startTime - .05) continue;
+      const left = endOf(lines[j]) - line.startTime;
+      const wordsToCome = lines[j].words?.some(word => word.startTime >= line.startTime + .1);
+      if (left >= 1.5 || (left >= 1 && wordsToCome)) lead[i] = j;
+    }
+  });
+  return lead;
+}
+
+/**
+ * Folia keeps one current line, so a second voice taken for a line of its own stops the first voice
+ * lighting up. Its place in the lyric data is `backgroundVocals` of the line it came in over (what
+ * TTML background vocals become): the first voice is then sung to the end, and Folia's harmony layer
+ * shows the second one, with its translation and romanization.
+ */
+function foldSecondVoices(lines, endOf) {
+  const lead = secondVoiceOf(lines, endOf);
+  if (lead.every(index => index < 0)) return lines;
+  const kept = lines.map(line => ({ ...line }));
+  lines.forEach((line, i) => {
+    if (lead[i] < 0) return;
+    const { fullText, startTime, endTime, words, translation, romanization, alternateTexts } = line;
+    const vocal = { text: fullText, startTime, endTime, words: words || [] };
+    if (translation) vocal.translation = translation;
+    if (romanization) vocal.romanization = romanization;
+    if (alternateTexts?.length) vocal.alternateTexts = alternateTexts;
+    kept[lead[i]].backgroundVocals = [...(kept[lead[i]].backgroundVocals || []), vocal];
+  });
+  return kept.filter((line, i) => lead[i] < 0);
+}
+
+/** The lines with their background vocals among them as lines of their own, in time order. */
+function unfoldVocals(lines) {
+  return lines.flatMap(line => [line, ...(line.backgroundVocals || []).map(({ text, ...vocal }) => ({ ...vocal, fullText: text, vocal: true }))])
+    .sort((a, b) => a.startTime - b.startTime);
+}
+
 function metadataText(metadata, key) {
   const candidates = [metadata?.[key], metadata?.song?.[key], metadata?.lyrics?.[key]];
   for (const candidate of candidates) {
@@ -162,12 +217,12 @@ function metadataText(metadata, key) {
   }
   return undefined;
 }
-return { shiftLines, pairBilingual };
+return { shiftLines, pairBilingual, secondVoiceOf, foldSecondVoices, unfoldVocals };
 })();
 
 // ---- renderer.mjs
 const __renderer = (() => {
-const { pairBilingual } = __lyrics;
+const { pairBilingual, secondVoiceOf, unfoldVocals } = __lyrics;
 
 // The display mode and the poster card take their look from Folia's own poster lyrics, so that
 // lyrics with readings sit beside the host's without a seam: each sung unit is filled by a soft
@@ -485,7 +540,11 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
       away.onfinish = away.oncancel = () => ghost.remove();
     }
   };
-  const lines = pairBilingual(ctx.lines);
+  // Lines sung over another are background vocals by now (foldSecondVoices). Folia's harmony layer
+  // shows them over its display modes, this mod's among them, but on the poster it goes with the
+  // rest of Folia's poster lyrics, so the poster draws them itself, readings and all, as small rows.
+  // Folia's switch for that layer decides there too.
+  const lines = poster && hostSetting('show_harmony_subtitle') !== 'false' ? unfoldVocals(pairBilingual(ctx.lines)) : pairBilingual(ctx.lines);
   let previousIndex = -2, optionsKey = '', timed = [], rows = [], countdown = null;
   // the caption's place above Folia's subtitle rows, as last measured (see paint)
   let measured = null, measuredAt = 0;
@@ -503,17 +562,9 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
     for (let i = Math.max(0, index - 4); i < index; i++) if (lines[i].startTime <= at && at < endOf(lines[i])) group.push(i);
     return [...group, index];
   };
-  // A line's part is settled as it starts and kept: one that starts while a leading line still has
-  // half a second or more to go is a second voice (drawn small); otherwise it leads, also when only a second voice is
-  // still going (the next line of the first voice). Lines starting together are a duet: both lead.
-  const voice = [];
-  lines.forEach((line, i) => {
-    voice[i] = false;
-    for (let j = Math.max(0, i - 4); j < i; j++) {
-      // (a line that starts as the one before is just ending is the next line, not a second voice)
-      if (!voice[j] && lines[j].startTime < line.startTime - .05 && line.startTime < endOf(lines[j]) - .5) voice[i] = true;
-    }
-  });
+  // second voices are drawn small; the same rule as the one that made them background vocals, for
+  // the vocals themselves and for lyrics that did not come from the file
+  const voice = secondVoiceOf(lines, endOf).map(lead => lead >= 0);
   const indexAt = time => {
     if (ctx.staticMode) return Math.min(lines.length - 1, Math.max(0, ctx.staticLineIndex ?? 0));
     let selected = -1;
@@ -656,7 +707,8 @@ function mountReading(container, ctx, folium, params, { poster = false, strip = 
           if (romaji && translated) row.append(romaji);
         }
         for (let k = first; k < timed.length; k++) timed[k].lineEnd = end;
-        if (current) rows.push({ row, end: line.endTime });
+        // (dims when its last unit's glow is over, not before)
+        if (current) rows.push({ row, end });
         root.append(row);
       };
       if (strip) for (const i of singing) addLine(lines[i], true, '', voice[i]);
@@ -1573,9 +1625,14 @@ function russianWord(word) {
   }).join('');
 }
 
-/** The language of some Cyrillic text, from the letters only that language has. */
+/**
+ * The language of some Cyrillic text, from the letters only that language has. They must make up at
+ * least one letter in a hundred: one stray і in a Russian song does not make it Ukrainian.
+ */
 function cyrillicLanguage(text) {
-  return OWN_LETTERS.find(([, letters]) => letters.test(text))?.[0] ?? 'ru';
+  const count = pattern => text.match(new RegExp(pattern.source, 'giu'))?.length ?? 0;
+  const letters = count(CYRILLIC);
+  return OWN_LETTERS.find(([, own]) => count(own) >= letters * .01 && count(own) > 0)?.[0] ?? 'ru';
 }
 
 /** The Cyrillic words of a text in Latin letters, lower case; everything else is left as it is. */
@@ -1734,7 +1791,7 @@ return { romanizeLine, withRomanization };
 
 // ---- integration.mjs
 const __integration = (() => {
-const { pairBilingual } = __lyrics;
+const { foldSecondVoices, pairBilingual } = __lyrics;
 const { findLocalRecords, readLocalEmbedded } = __local_song;
 const { parseFaKara } = __fa_kara;
 const { withRomanization } = __romaji;
@@ -1868,8 +1925,10 @@ function createIntegration(folium, {readEmbedded = record => readLocalEmbedded(r
     if (!Array.isArray(entry)) return;  // no readings in the file, or still reading it
     const rich=entry.find(lyrics => fromTheFile(lyrics.lines,event.lines));
     if (!rich) {state={song:event.song,embedded:false,error:null,ready:true};return;}
-    // Folia's own modes show the romanization line when its subtitle setting asks for it.
-    event.lines=withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),event.lines)),event.lines));
+    // Folia's own modes show the romanization line when its subtitle setting asks for it. Lines sung
+    // over another go to its harmony layer, as background vocals of the line they came in over.
+    const endOf=line => {try {return Math.max(line.endTime,folium.lyrics?.getLineRenderEndTime?.(line) ?? line.endTime);} catch {return line.endTime;}};
+    event.lines=foldSecondVoices(withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),event.lines)),event.lines)),endOf);
     state={song:event.song,embedded:true,error:null,ready:true};
   });
   // Lyrics already on the player when the mod starts (Folia restores the last song before it

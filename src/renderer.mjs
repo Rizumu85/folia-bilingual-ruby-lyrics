@@ -1,4 +1,4 @@
-import { pairBilingual } from './lyrics.mjs';
+import { pairBilingual, secondVoiceOf, unfoldVocals } from './lyrics.mjs';
 
 // The display mode and the poster card take their look from Folia's own poster lyrics, so that
 // lyrics with readings sit beside the host's without a seam: each sung unit is filled by a soft
@@ -316,7 +316,11 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
       away.onfinish = away.oncancel = () => ghost.remove();
     }
   };
-  const lines = pairBilingual(ctx.lines);
+  // Lines sung over another are background vocals by now (foldSecondVoices). Folia's harmony layer
+  // shows them over its display modes, this mod's among them, but on the poster it goes with the
+  // rest of Folia's poster lyrics, so the poster draws them itself, readings and all, as small rows.
+  // Folia's switch for that layer decides there too.
+  const lines = poster && hostSetting('show_harmony_subtitle') !== 'false' ? unfoldVocals(pairBilingual(ctx.lines)) : pairBilingual(ctx.lines);
   let previousIndex = -2, optionsKey = '', timed = [], rows = [], countdown = null;
   // the caption's place above Folia's subtitle rows, as last measured (see paint)
   let measured = null, measuredAt = 0;
@@ -334,17 +338,9 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     for (let i = Math.max(0, index - 4); i < index; i++) if (lines[i].startTime <= at && at < endOf(lines[i])) group.push(i);
     return [...group, index];
   };
-  // A line's part is settled as it starts and kept: one that starts while a leading line still has
-  // half a second or more to go is a second voice (drawn small); otherwise it leads, also when only a second voice is
-  // still going (the next line of the first voice). Lines starting together are a duet: both lead.
-  const voice = [];
-  lines.forEach((line, i) => {
-    voice[i] = false;
-    for (let j = Math.max(0, i - 4); j < i; j++) {
-      // (a line that starts as the one before is just ending is the next line, not a second voice)
-      if (!voice[j] && lines[j].startTime < line.startTime - .05 && line.startTime < endOf(lines[j]) - .5) voice[i] = true;
-    }
-  });
+  // second voices are drawn small; the same rule as the one that made them background vocals, for
+  // the vocals themselves and for lyrics that did not come from the file
+  const voice = secondVoiceOf(lines, endOf).map(lead => lead >= 0);
   const indexAt = time => {
     if (ctx.staticMode) return Math.min(lines.length - 1, Math.max(0, ctx.staticLineIndex ?? 0));
     let selected = -1;
@@ -487,7 +483,8 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
           if (romaji && translated) row.append(romaji);
         }
         for (let k = first; k < timed.length; k++) timed[k].lineEnd = end;
-        if (current) rows.push({ row, end: line.endTime });
+        // (dims when its last unit's glow is over, not before)
+        if (current) rows.push({ row, end });
         root.append(row);
       };
       if (strip) for (const i of singing) addLine(lines[i], true, '', voice[i]);

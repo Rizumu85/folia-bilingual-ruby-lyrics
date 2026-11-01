@@ -151,6 +151,61 @@ export function pairBilingual(lines, primary = "original") {
   });
 }
 
+/**
+ * Which lines are a second voice, and over which line each came in: for every line the index of its
+ * leading line, or -1 for a line that leads. A line's part is settled as it starts: one that starts
+ * while a leading line has 1.5 seconds or more to go is a second voice, and so is one with a second
+ * or more to go and words of it yet to start. Otherwise it leads, also when only a second voice is
+ * still going (the next line of the first voice). Lines starting together are a duet: both lead.
+ * Lines of a song often overlap by up to a second with one simply following the other, or the last
+ * word of one held over the start of the next (over the whole library, most overlaps under a second
+ * are such lines); a second voice sung for real goes on longer. `endOf` says how long a line lasts.
+ * A background vocal already taken out of its line (`vocal`, see unfoldVocals) is a second voice
+ * whatever the times say.
+ */
+export function secondVoiceOf(lines, endOf = line => line.endTime) {
+  const lead = [];
+  lines.forEach((line, i) => {
+    lead[i] = line.vocal ? Math.max(0, i - 1) : -1;
+    if (line.vocal) return;
+    for (let j = Math.max(0, i - 4); j < i; j++) {
+      if (lead[j] >= 0 || lines[j].startTime >= line.startTime - .05) continue;
+      const left = endOf(lines[j]) - line.startTime;
+      const wordsToCome = lines[j].words?.some(word => word.startTime >= line.startTime + .1);
+      if (left >= 1.5 || (left >= 1 && wordsToCome)) lead[i] = j;
+    }
+  });
+  return lead;
+}
+
+/**
+ * Folia keeps one current line, so a second voice taken for a line of its own stops the first voice
+ * lighting up. Its place in the lyric data is `backgroundVocals` of the line it came in over (what
+ * TTML background vocals become): the first voice is then sung to the end, and Folia's harmony layer
+ * shows the second one, with its translation and romanization.
+ */
+export function foldSecondVoices(lines, endOf) {
+  const lead = secondVoiceOf(lines, endOf);
+  if (lead.every(index => index < 0)) return lines;
+  const kept = lines.map(line => ({ ...line }));
+  lines.forEach((line, i) => {
+    if (lead[i] < 0) return;
+    const { fullText, startTime, endTime, words, translation, romanization, alternateTexts } = line;
+    const vocal = { text: fullText, startTime, endTime, words: words || [] };
+    if (translation) vocal.translation = translation;
+    if (romanization) vocal.romanization = romanization;
+    if (alternateTexts?.length) vocal.alternateTexts = alternateTexts;
+    kept[lead[i]].backgroundVocals = [...(kept[lead[i]].backgroundVocals || []), vocal];
+  });
+  return kept.filter((line, i) => lead[i] < 0);
+}
+
+/** The lines with their background vocals among them as lines of their own, in time order. */
+export function unfoldVocals(lines) {
+  return lines.flatMap(line => [line, ...(line.backgroundVocals || []).map(({ text, ...vocal }) => ({ ...vocal, fullText: text, vocal: true }))])
+    .sort((a, b) => a.startTime - b.startTime);
+}
+
 function metadataText(metadata, key) {
   const candidates = [metadata?.[key], metadata?.song?.[key], metadata?.lyrics?.[key]];
   for (const candidate of candidates) {

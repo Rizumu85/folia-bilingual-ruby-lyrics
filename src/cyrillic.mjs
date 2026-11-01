@@ -43,9 +43,14 @@ function russianWord(word) {
   }).join('');
 }
 
-/** The language of some Cyrillic text, from the letters only that language has. */
+/**
+ * The language of some Cyrillic text, from the letters only that language has. They must make up at
+ * least one letter in a hundred: one stray і in a Russian song does not make it Ukrainian.
+ */
 export function cyrillicLanguage(text) {
-  return OWN_LETTERS.find(([, letters]) => letters.test(text))?.[0] ?? 'ru';
+  const count = pattern => text.match(new RegExp(pattern.source, 'giu'))?.length ?? 0;
+  const letters = count(CYRILLIC);
+  return OWN_LETTERS.find(([, own]) => count(own) >= letters * .01 && count(own) > 0)?.[0] ?? 'ru';
 }
 
 /** The Cyrillic words of a text in Latin letters, lower case; everything else is left as it is. */

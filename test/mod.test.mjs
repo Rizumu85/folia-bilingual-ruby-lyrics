@@ -3,7 +3,8 @@
 // Folia actually loads. Run: node --test test/mod.test.mjs
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { pairBilingual } from '../src/lyrics.mjs';
+import { foldSecondVoices, pairBilingual, secondVoiceOf, unfoldVocals } from '../src/lyrics.mjs';
+import { cyrillicLanguage } from '../src/cyrillic.mjs';
 import { parseFaKara } from '../src/fa-kara.mjs';
 import { parseId3 } from '../src/id3.mjs';
 import { createIntegration } from '../src/integration.mjs';
@@ -34,6 +35,59 @@ test('a transliterated name with a middle dot is not mistaken for the Japanese o
 test('two sung lines that start together and each have a translation stay two lines', () => {
   const paired = pairBilingual([line('右から歌う', 1, { translation: '从右边唱' }), line('左から歌う', 1, { translation: '从左边唱' })]);
   assert.deepEqual(paired.map(item => [item.fullText, item.translation]), [['右から歌う', '从右边唱'], ['左から歌う', '从左边唱']]);
+});
+
+const timed = (fullText, startTime, endTime, extra = {}) => ({ fullText, startTime, endTime, words: [{ text: fullText, startTime, endTime }], ...extra });
+
+test('a line that comes in over a leading line becomes that line\'s background vocal, with its rows', () => {
+  const folded = foldSecondVoices([timed('主旋律', 10, 15), timed('かさなる声', 12, 14, { translation: '重叠的声音', romanization: 'kasanaru koe' }), timed('次の句', 16, 18)]);
+  assert.deepEqual(folded.map(item => item.fullText), ['主旋律', '次の句']);
+  assert.deepEqual(folded[0].backgroundVocals, [{ text: 'かさなる声', startTime: 12, endTime: 14, words: [{ text: 'かさなる声', startTime: 12, endTime: 14 }], translation: '重叠的声音', romanization: 'kasanaru koe' }]);
+});
+
+test('in a chain of overlaps the first voice keeps leading: its next line is not taken for a second voice', () => {
+  // A is still sung when B comes in; B is still sung when C, the first voice's next line, comes in
+  const folded = foldSecondVoices([timed('A', 10, 14), timed('B', 12, 16), timed('C', 13.8, 18)]);
+  assert.deepEqual(folded.map(item => item.fullText), ['A', 'C']);
+  assert.deepEqual(folded[0].backgroundVocals.map(vocal => vocal.text), ['B']);
+});
+
+test('lines that start together, and a line that starts as the one before is ending, stay lines', () => {
+  const lines = [timed('右', 10, 14), timed('左', 10, 14), timed('次', 13.7, 16)];
+  assert.deepEqual(foldSecondVoices(lines).map(item => item.fullText), ['右', '左', '次']);
+  assert.equal(foldSecondVoices(lines)[0].backgroundVocals, undefined);
+});
+
+test('the time a line is held on the screen counts, when the caller knows it', () => {
+  const lines = [timed('A', 10, 12), timed('B', 11.8, 14)];
+  assert.deepEqual(foldSecondVoices(lines).map(item => item.fullText), ['A', 'B']);
+  assert.deepEqual(foldSecondVoices(lines, line => line.endTime + 2).map(item => item.fullText), ['A']);
+});
+
+test('one line following another with a short overlap, or over a held last word, is the next line', () => {
+  const word = (text, startTime, endTime) => ({ text, startTime, endTime });
+  // the overlap under a second, with words of the first line still to start
+  assert.equal(foldSecondVoices([timed('A', 10, 12.8, { words: [word('前', 10, 12), word('後', 12.5, 12.8)] }), timed('B', 12, 14)]).length, 2);
+  // a second and a bit, but only the last word is held
+  assert.equal(foldSecondVoices([timed('A', 10, 13.2, { words: [word('前', 10, 11), word('伸', 11, 13.2)] }), timed('B', 12, 14)]).length, 2);
+  // the same overlap with words to come is a voice of its own
+  assert.equal(foldSecondVoices([timed('A', 10, 13.2, { words: [word('前', 10, 12), word('後', 12.5, 13.2)] }), timed('B', 12, 14)]).length, 1);
+});
+
+test('background vocals a line already has stay, and those lines come back in time order for the poster', () => {
+  const host = { text: '和声', startTime: 13, endTime: 14, words: [] };
+  const folded = foldSecondVoices([timed('主旋律', 10, 16, { backgroundVocals: [host] }), timed('かさなる声', 12, 14), timed('次の句', 17, 18)]);
+  assert.deepEqual(folded[0].backgroundVocals.map(vocal => vocal.text), ['和声', 'かさなる声']);
+  const lines = unfoldVocals(folded);
+  assert.deepEqual(lines.map(item => [item.fullText, item.vocal === true]), [['主旋律', false], ['かさなる声', true], ['和声', true], ['次の句', false]]);
+  assert.deepEqual(secondVoiceOf(lines).map(lead => lead >= 0), [false, true, true, false]);
+});
+
+test('one stray letter does not turn a whole Russian song into Ukrainian', () => {
+  const russian = 'Есть у меня душа и песня одна на свете. '.repeat(30);
+  assert.equal(cyrillicLanguage(russian + 'і'), 'ru');
+  assert.equal(cyrillicLanguage('Ще не вмерла України і слава, і воля'), 'uk');
+  assert.equal(cyrillicLanguage('Қазақстан'), 'kk');
 });
 
 test('a reading stays on its own chunk and off the translation line sharing the timestamp', () => {

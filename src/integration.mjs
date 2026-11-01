@@ -1,4 +1,4 @@
-import { pairBilingual } from './lyrics.mjs';
+import { foldSecondVoices, pairBilingual } from './lyrics.mjs';
 import { findLocalRecords, readLocalEmbedded } from './local-song.mjs';
 import { parseFaKara } from './fa-kara.mjs';
 import { withRomanization } from './romaji.mjs';
@@ -132,8 +132,10 @@ export function createIntegration(folium, {readEmbedded = record => readLocalEmb
     if (!Array.isArray(entry)) return;  // no readings in the file, or still reading it
     const rich=entry.find(lyrics => fromTheFile(lyrics.lines,event.lines));
     if (!rich) {state={song:event.song,embedded:false,error:null,ready:true};return;}
-    // Folia's own modes show the romanization line when its subtitle setting asks for it.
-    event.lines=withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),event.lines)),event.lines));
+    // Folia's own modes show the romanization line when its subtitle setting asks for it. Lines sung
+    // over another go to its harmony layer, as background vocals of the line they came in over.
+    const endOf=line => {try {return Math.max(line.endTime,folium.lyrics?.getLineRenderEndTime?.(line) ?? line.endTime);} catch {return line.endTime;}};
+    event.lines=foldSecondVoices(withRomanization(keepHostData(cleanHints(carryTranslations(pairBilingual(rich.lines),event.lines)),event.lines)),endOf);
     state={song:event.song,embedded:true,error:null,ready:true};
   });
   // Lyrics already on the player when the mod starts (Folia restores the last song before it

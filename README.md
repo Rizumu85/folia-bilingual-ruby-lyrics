@@ -93,8 +93,8 @@ Folia 同一时间只有一句当前歌词，第二声部如果算作一句，�
 
 - 读取正在播放的本地音乐文件的标签区（只读，每块最多 16 MB），取出其中的歌词；只读文件头和标签，不读音频数据。绝对路径由 `main.cjs` 读取；通过文件夹授权添加的歌曲用宿主已保存的目录句柄读取。
 - 只读访问宿主的 IndexedDB（`KineticPlayerDB` 的 `local_music` 和目录句柄记录），用来找到当前歌曲的文件：模组接口给出的歌曲只有歌名、歌手、专辑和时长，没有文件位置，所以按这几项在本地曲库表里找。这张表不属于模组接口，Folia 以后改了它，模组只会读不到注音，Folia 自己的歌词照常显示。
-- 只读访问宿主的四项本地设置（`localStorage`），都是 Folia 没有交给模组的状态：`hide_player_translation_subtitle`（底部字幕层是否隐藏，隐藏时注音字幕条贴到最底下）；`subtitle_content_mode`（Folia 把“罗马音与翻译双行显示”报告给模组时会说成“翻译”，要靠这一项才能分辨）；`transparent_player_background` 和 `enable_player_page_native_blur`（播放页是透明背景或系统毛玻璃时，注音字幕条改用不带模糊的硬阴影，因为主题背景色和实际画面对不上，宽的晕影会显脏）。
-- 注音字幕条打开期间，往宿主页面注入一段样式（通过 `folium.registries.styles`），改 Folia 自己字幕行的不透明度和阴影、隐藏字幕后面的模糊底。Folia 没有为字幕提供公开的样式接口，这段样式是按它字幕层现有的标记（`data-subtitle-track`）写的，不属于稳定接口：Folia 以后改了结构，这段样式会不再生效，字幕回到原样，不会出错。字幕条关掉或模组停用时样式撤掉。
+- 只读访问宿主的五项本地设置（`localStorage`），都是 Folia 没有交给模组的状态：`hide_player_translation_subtitle`（底部字幕层是否隐藏，隐藏时注音字幕条贴到最底下）；`subtitle_overlay_layout`（底部字幕有几行，注音字幕条要让开）；`subtitle_content_mode`（Folia 把“罗马音与翻译双行显示”报告给模组时会说成“翻译”，要靠这一项才能分辨）；`transparent_player_background` 和 `enable_player_page_native_blur`（播放页是透明背景或系统毛玻璃时，注音字幕条改用不带模糊的硬阴影，因为主题背景色和实际画面对不上，宽的晕影会显脏）。
+- 注音字幕条打开期间，往宿主页面注入一段样式（通过 `folium.registries.styles`），改 Folia 自己字幕行的不透明度和阴影、隐藏字幕后面的模糊底；字幕条显示着时还隐藏 Folia 字幕里“当前句”那一行（字幕条就是这一句，没有注音的歌不显示字幕条，这一行也就留着）。Folia 没有为字幕提供公开的样式接口，这段样式是按它字幕层现有的标记（`data-subtitle-track`）写的，不属于稳定接口：Folia 以后改了结构，这段样式会不再生效，字幕回到原样，不会出错。字幕条关掉或模组停用时样式撤掉。
 - 不联网，不启动进程，不写任何文件。
 
 ### 关于“海报歌词”

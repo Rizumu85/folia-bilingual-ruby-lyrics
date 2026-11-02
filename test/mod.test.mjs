@@ -9,6 +9,7 @@ import { parseFaKara } from '../src/fa-kara.mjs';
 import { parseId3 } from '../src/id3.mjs';
 import { createIntegration } from '../src/integration.mjs';
 import { romanizeLine, withRomanization } from '../src/romaji.mjs';
+import { hostSubtitleCss, rowsUnderCaption } from '../src/renderer.mjs';
 import { readEmbeddedLyrics } from '../src/tags.mjs';
 import activate from '../bilingual-ruby-lyrics/client.mjs';
 import fs from 'node:fs';
@@ -20,6 +21,20 @@ import { fileURLToPath } from 'node:url';
 
 const line = (fullText, startTime, extra = {}) => ({ fullText, startTime, endTime: startTime + 2, words: [], ...extra });
 const rubyOf = lines => lines.map(item => [item.fullText, (item.words || []).flatMap(word => word.syllables || []).filter(part => part.ruby?.length).map(part => part.text + '=' + part.ruby.map(r => r.text).join(''))]);
+
+test('the caption sits on the rows of Folia\'s subtitle layout, not on its subtitle content', () => {
+  assert.equal(rowsUnderCaption('translation', 0), 1);
+  assert.equal(rowsUnderCaption('current+next', 0), 1);
+  assert.equal(rowsUnderCaption('current+romanization+translation', 2), 2);
+  assert.equal(rowsUnderCaption('current', 1), 0);
+  assert.equal(rowsUnderCaption(null, 2), 2);
+});
+
+test('Folia\'s row for the current line goes only while the caption is up', () => {
+  const theme = { backgroundColor: '#000' }, rule = '[data-subtitle-track="current"]';
+  assert.ok(hostSubtitleCss(theme, true).includes(rule));
+  assert.ok(!hostSubtitleCss(theme, false).includes(rule));
+});
 
 test('an original and its translation at the same time become one line', () => {
   const paired = pairBilingual([line('雨が歌う', 1), line('雨在歌唱', 1)]);

@@ -103,11 +103,12 @@ export default function activate(folium) {
     mount: (container, ctx) => {
       // While the caption is switched on, Folia's own subtitle rows take the caption's look, for
       // every song, so that the two do not sit side by side in different styles. The stylesheet is
-      // made from the theme, and made again when the theme or the see-through state changes.
-      let sheet = null, css = '';
+      // made from the theme, and made again when the theme or the see-through state changes, or
+      // when the caption comes or goes: only while it is up does it stand in for the current line.
+      let sheet = null, css = '', shown = null;
       const restyle = () => {
         const position = params.get().strip, on = position === 'top' || position === 'bottom';
-        const wanted = on ? hostSubtitleCss(ctx.getTheme()) : '';
+        const wanted = on ? hostSubtitleCss(ctx.getTheme(), shown !== null) : '';
         if (wanted === css) return;
         sheet?.unregister?.(); sheet = null; css = wanted;
         if (wanted) sheet = folium.registries.styles?.register({ id: 'subtitles', css: wanted }) || null;
@@ -116,13 +117,14 @@ export default function activate(folium) {
       const stops = [params.onChange(restyle), ctx.onChange(restyle)], timer = setInterval(restyle, 1000);
       const stopRestyle = () => { clearInterval(timer); for (const stop of stops) stop?.(); sheet?.unregister?.(); sheet = null; css = ''; };
       if (!hasReadings(ctx.lines)) return stopRestyle;
-      let dispose = null, shown = null;
+      let dispose = null;
       const sync = () => {
         const position = params.get().strip;
         const wanted = (position === 'top' || position === 'bottom') && !ownModeShown ? position : null;
         if (wanted === shown) return;
         dispose?.(); dispose = null; shown = wanted;
         if (wanted) dispose = mountReading(container, ctx, folium, params, { strip: wanted });
+        restyle();
       };
       sync();
       const unsubscribe = params.onChange(sync);

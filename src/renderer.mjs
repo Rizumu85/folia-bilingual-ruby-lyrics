@@ -176,12 +176,18 @@ function withHostFonts(theme) {
 // (the host computes it outside its stores), so the stored setting is read.
 const hostLayerHidden = display => display.hideTranslationSubtitle === true || hostSetting('hide_player_translation_subtitle') === 'true';
 
+// How many of Folia's subtitle rows the caption sits on. From 0.7.24 the rows are the bottom
+// subtitle's own layout ('current+romanization+translation'), whatever the subtitle content says;
+// its current-line row is hidden under a caption (see hostSubtitleCss). Before that, `content`.
+export const rowsUnderCaption = (layout, content) => layout ? layout.split('+').filter(row => row !== 'current').length : content;
+
 // Where Folia's own subtitle rows sit on the page: how far the top of the first row is above the
 // bottom edge of their box, and where that edge is. Read from the layout (not from on-screen
 // rectangles, which move while the rows animate in). Null while no row is shown. The rows are
-// found by the same marker the stylesheet below goes by.
+// found by the same marker the stylesheet below goes by; a hidden row has no place.
 function hostSubtitleBox(doc) {
-  const row = doc.querySelector('[data-subtitle-track]'), box = row?.parentElement?.parentElement?.parentElement;
+  const row = [...doc.querySelectorAll('[data-subtitle-track]')].find(item => item.offsetParent);
+  const box = row?.parentElement?.parentElement?.parentElement;
   if (!box?.offsetParent) return null;
   let top = 0;
   for (let node = row; node && node !== box; node = node.offsetParent) { if (!box.contains(node)) return null; top += node.offsetTop; }
@@ -205,14 +211,16 @@ const captionShadow = theme => seeThrough()
 // its display modes) the look of the caption they sit next to: opaque, the caption's shadow, and
 // no blurred plate behind them. Folia offers mods no styling hook for these rows, so the rules
 // go by the markers its subtitle layer happens to carry (data-subtitle-track and the layout
-// around it, the same from 0.7.12 to 0.7.22). If a later Folia changes them the rules simply stop
-// matching and its subtitles look as they always did.
-export function hostSubtitleCss(theme) {
+// around it, the same from 0.7.12 to 0.7.25). If a later Folia changes them the rules simply stop
+// matching and its subtitles look as they always did. While the caption is on screen it is the
+// current line, so Folia's row for that line (0.7.24 on) goes.
+export function hostSubtitleCss(theme, captionShown = false) {
   const shadow = captionShadow(theme);
   return `
     div:has(> div > div > [data-subtitle-track]) { opacity:1 !important; }
     div:has(> div > [data-subtitle-track]) > div[aria-hidden="true"] { display:none !important; }
-    [data-subtitle-track] { opacity:1 !important; text-shadow:${shadow} !important; }`;
+    [data-subtitle-track] { opacity:1 !important; text-shadow:${shadow} !important; }${captionShown ? `
+    [data-subtitle-track="current"] { display:none !important; }` : ''}`;
 }
 
 // How strongly a unit glows at `time`, 0 to 1, with the host's timing for its poster lyrics: the
@@ -403,9 +411,8 @@ export function mountReading(container, ctx, folium, params, { poster = false, s
     // The wall remains visible outside the player; showText belongs to the player stage.
     root.style.opacity = String(poster ? 1 : display.showText === false ? 0 : strip ? 1 : display.visualizerOpacity ?? 1);
     if (strip === 'bottom') {
-      // Sit just above Folia's own subtitle rows: none when subtitles are off or the bottom
-      // subtitle layer is hidden, else one, or two when romanization and translation are both shown.
-      const rows = hostLayerHidden(display) ? 0 : Number(shown.translation) + Number(shown.romaji);
+      // Sit just above Folia's own subtitle rows: none when the bottom subtitle layer is hidden.
+      const rows = hostLayerHidden(display) ? 0 : rowsUnderCaption(hostSetting('subtitle_overlay_layout'), Number(shown.translation) + Number(shown.romaji));
       const view = root.ownerDocument.defaultView, width = view?.innerWidth || 1280, scale = display.subtitleFontScale || 1;
       // Where the rows really are is measured on the page, a few times a second. The tallest box
       // seen for the current settings is kept, so that the caption does not bob when a line has
